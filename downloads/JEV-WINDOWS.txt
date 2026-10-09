@@ -4,6 +4,7 @@ HOODSCOUT - CONNECT JEV ON WINDOWS
 2. Extract All from this ZIP. Double-click Connect-JEV-and-Start-HoodScout.cmd.
 3. At the hidden prompt, paste your TypeSafe API key and press Enter.
    The key will not appear as you type. Never send it in chat.
+   If a key is already configured, just press Enter to keep it.
 4. The assistant tests JEV and saves verified settings in your local .env.
    It then starts the PAPER dashboard and opens the browser. Keep the window open.
 
@@ -11,7 +12,7 @@ Default project: %USERPROFILE%\Desktop\dev\hoodscout-robinhood
 If yours is elsewhere, drag your project folder onto the CMD file.
 
 The launcher downloads a fixed GitHub revision, checks SHA-256, applies the update
-and runs 75 tests first. The updater preserves .env, .venv and data, backs up
+and runs 102 tests first. The updater preserves .env, .venv and data, backs up
 changed source files and stops on local source conflicts. No new Python package
 is required. Your existing .venv must already contain the project dependencies.
 
@@ -27,7 +28,19 @@ becomes JEV CHECK until another request succeeds. PAPER entry still requires all
 independent liquidity, current price, quote-age and risk gates. This update does
 not enable live transaction broadcasting.
 
-The cloud verified both upgrade paths, 75 Python tests and the official TypeSafe
+NEW IN THIS UPDATE
+- Swap activity: buys/sells, unique buyers, buy volume and top-buyer share for
+  every watched pool, read from on-chain Uniswap V3 Swap events.
+- JEV credits: by default JEV is only asked when every non-model gate already
+  passes (JEV_CALL_POLICY=prefiltered). Pools that fail a hard gate are logged
+  as "not sent" and cost nothing. Set JEV_CALL_POLICY=all in .env for research.
+- KILL SWITCH button in the dashboard header: stops JEV calls and new paper
+  entries immediately and stays on after a restart until you turn it off.
+- New entry gates: at least 3 unique buyers, top buyer <= 50% of buy volume,
+  swap data at most 30 seconds old. Unknown values block entries.
+
+The cloud verified the upgrade from the first published project and from the
+JEV update (also with Windows CRLF files), 102 Python tests and the official TypeSafe
 SDK request/response schema. Windows launcher execution and an authenticated JEV
 call must be verified on your Windows machine.
 
