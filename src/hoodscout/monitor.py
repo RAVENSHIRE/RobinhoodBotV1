@@ -1,0 +1,213 @@
+"""Robinhood PoolCreated scanner and early token observation loop."""
+from __future__ import annotations
+from dataclasses import asdict
+import logging
+import threading
+import time
+
+from .chain import ChainReader, PoolEvent
+from .config import Config
+from .decision_engine import DecisionEngine
+from .execution import PaperExecutor
+from .gates import evaluate, RiskLimits
+from .quote import quote_buy
+from .pricing import EthUsdFeed
+from .rpc import RPC, RpcError
+from .store import Store
+
+log = logging.getLogger(__name__)
+
+
+class Monitor:
+    def __init__(self, cfg: Config, store: Store):
+        self.cfg, self.store = cfg, store
+        self.rpc = RPC(cfg.rpc_url)
+        # A legacy static ETH_USD value must never authorize an entry.
+        self.reader = ChainReader(self.rpc, cfg.factory, cfg.weth, None)
+        self.price_feed = EthUsdFeed(enabled=cfg.price_feed_mode != 'off',
+            refresh_seconds=cfg.price_refresh_seconds, max_age_seconds=cfg.price_max_age_seconds,
+            max_divergence_pct=cfg.price_max_divergence_pct,
+            future_tolerance_seconds=cfg.price_future_tolerance_seconds)
+        self.engine = DecisionEngine(cfg.decision_provider, cfg.typesafe_api_key, cfg.jev_endpoint, cfg.jev_model)
+        self.executor = PaperExecutor(store, cfg.paper_order_usd, cfg.paper_slippage_bps,
+                                      cfg.paper_fee_bps, cfg.paper_stop_loss_pct, cfg.paper_take_profit_pct,
+                                      cfg.paper_max_hold_seconds, cfg.max_open_positions,
+                                      cfg.max_paper_exposure_usd, cfg.max_daily_loss_usd)
+        self.limits = RiskLimits(cfg.min_liquidity_usd, cfg.min_volatility_pct, cfg.max_volatility_pct, cfg.min_confidence,
+                                 cfg.max_risk_score, cfg.max_price_impact_pct, cfg.owner_renounced_required,
+                                 cfg.price_max_age_seconds, cfg.quote_max_age_seconds,
+                                 cfg.price_future_tolerance_seconds)
+        self.active: dict[str, PoolEvent] = {}
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.last_error = None
+        self.ready = False
+        self._cursor = None
+        self._quoter_verified = None
+
+    def start(self):
+        if self.thread and self.thread.is_alive():
+            return
+        self.thread = threading.Thread(target=self.run, name='robinhood-scanner', daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join(timeout=8)
+        self.rpc.close()
+        self.price_feed.close()
+
+    def restore_active(self):
+        now = time.time()
+        open_pools = {p['pool'] for p in self.store.open_positions()}
+        for item in self.store.pools(limit=100):
+            if now - item['timestamp'] < self.cfg.monitor_minutes * 60 or item['address'].lower() in open_pools:
+                event = PoolEvent(**item)
+                self.active[event.address.lower()] = event
+
+    def run(self):
+        try:
+            found_id = self.rpc.chain_id()
+            if found_id != self.cfg.chain_id:
+                raise RpcError(f'CHAIN ID MISMATCH: RPC returned {found_id}, expected {self.cfg.chain_id}')
+            if not self.rpc.code(self.cfg.factory) or not self.rpc.code(self.cfg.weth):
+                raise RpcError('Factory or WETH code missing on configured RPC')
+            self.restore_active()
+            self.ready = True
+            while not self.stop_event.is_set():
+                try:
+                    self.price_feed.refresh()
+                    self.scan_once()
+                    self.update_active()
+                    self.last_error = None
+                    self.store.set_meta('scanner_last_error', '')
+                    self.store.set_meta('scanner_last_ok', str(time.time()))
+                except Exception as exc:
+                    self.last_error = f'{type(exc).__name__}: {exc}'[:500]
+                    self.store.set_meta('scanner_last_error', self.last_error)
+                    log.exception('Scanner cycle failed')
+                self.stop_event.wait(self.cfg.poll_interval)
+        except Exception as exc:
+            self.last_error = f'{type(exc).__name__}: {exc}'[:500]
+            self.store.set_meta('scanner_last_error', self.last_error)
+            log.exception('Scanner failed to start')
+        finally:
+            self.ready = False
+
+    def scan_once(self):
+        tip = self.rpc.block_number()
+        if self._cursor is None:
+            # Versioned cursor: the old topic never found genuine PoolCreated events.
+            # Preserve the DB and start one bounded BACKFILL_BLOCKS window on migration.
+            prior = self.store.get_meta('pool_created_cursor_v2')
+            self._cursor = int(prior) if prior else max(0, tip - self.cfg.backfill_blocks)
+        # Bounded catchup. Only advance the cursor after the full chunk was read.
+        for _ in range(3):
+            if self._cursor >= tip:
+                return
+            end = min(tip, self._cursor + self.cfg.max_block_range)
+            for event in self.reader.discover(self._cursor + 1, end):
+                self.store.put_pool(asdict(event))
+                if (event.address.lower() not in self.active and
+                        len(self.active) < self.cfg.max_active_pools):
+                    self.active[event.address.lower()] = event
+            self._cursor = end
+            self.store.set_meta('pool_created_cursor_v2', str(self._cursor))
+            self.store.set_meta('last_scanned_block', str(self._cursor))
+
+    def _verify_quoter(self) -> bool:
+        if not self.cfg.quoter:
+            return False
+        if self._quoter_verified is not None:
+            if not self._quoter_verified:
+                raise RpcError('Configured quoter points to a different factory or WETH')
+            return self._quoter_verified
+        if not self.rpc.code(self.cfg.quoter):
+            raise RpcError('Configured quoter has no bytecode')
+        from .rpc import as_address, read_word
+        claimed_factory = as_address(read_word(self.rpc.eth_call(self.cfg.quoter, '0xc45a0155')))
+        claimed_weth = as_address(read_word(self.rpc.eth_call(self.cfg.quoter, '0x4aa4a4fc')))
+        self._quoter_verified = (claimed_factory.lower() == self.cfg.factory.lower() and
+                                 claimed_weth.lower() == self.cfg.weth.lower())
+        if not self._quoter_verified:
+            raise RpcError('Configured quoter points to a different factory or WETH')
+        return True
+
+    def _state(self, event: PoolEvent) -> dict:
+        reference = self.price_feed.refresh()
+        self.reader.eth_usd = reference['price_usd'] if reference['verified'] else None
+        state = self.reader.pool_state(event)
+        now = time.time()
+        state['observed_at'] = now
+        state['age_seconds'] = max(0, now - event.timestamp)
+        state['chain_id'] = self.cfg.chain_id
+        state['eth_usd_feed'] = reference
+        state['eth_usd_reference'] = reference['price_usd']
+        state['eth_usd_timestamp'] = reference['timestamp']
+        state['eth_usd_verified'] = reference['verified']
+        prior = self.store.snapshots(event.address, limit=500)
+        # Use only previously observed prices; never infer past 30s observations.
+        past_prices = [s['price_usd'] for s in prior if
+                       isinstance(s.get('price_usd'), (float, int)) and s['price_usd'] > 0 and now - s['ts'] <= 60]
+        state['observed_price_change_pct'] = (100 * (state['price_usd'] / past_prices[0] - 1)
+            if past_prices and state['price_usd'] is not None else None)
+        state['volatility_pct'] = (100 * ((max(past_prices + [state['price_usd']]) /
+            min(past_prices + [state['price_usd']])) - 1)
+            if past_prices and state['price_usd'] is not None else None)
+        state['buy_count'] = None  # No fake buyer counts: swaps/wallet traces not implemented in MVP.
+        state['sell_count'] = None
+        if (self.cfg.quoter and reference['verified'] and state.get('sqrt_price_x96')
+            and state.get('tvl_usd_estimate') is not None):
+            try:
+                self._verify_quoter()
+                dec0 = state['token0_metadata']['decimals']
+                dec1 = state['token1_metadata']['decimals']
+                if dec0 is not None and dec1 is not None:
+                    quote = quote_buy(self.rpc, self.cfg.quoter, event, self.cfg.weth,
+                        reference['price_usd'], self.cfg.paper_order_usd, int(state['sqrt_price_x96']), dec0, dec1)
+                    state.update(quote)
+                    state['liquidity_verified'] = True  # Quote works; TVL is still approximate.
+                    state['liquidity_usd'] = state['tvl_usd_estimate']
+            except (RpcError, ValueError, ArithmeticError) as exc:
+                state['quote_error'] = str(exc)[:160]
+        # Long RPC calls may outlive the source freshness window. Do not mark paper
+        # positions using a now-stale USD reference; gates recheck after model latency.
+        if (not reference['verified'] or not
+                -self.cfg.price_future_tolerance_seconds <= time.time() - reference['timestamp']
+                <= self.cfg.price_max_age_seconds):
+            state.update(eth_usd_verified=False, price_usd=None, liquidity_verified=False,
+                         liquidity_usd=None, tvl_usd_estimate=None)
+        return state
+
+    def update_active(self):
+        now = time.time()
+        current_positions = {p['pool'] for p in self.store.open_positions()}
+        for pool, event in list(self.active.items()):
+            age = now - event.timestamp
+            if age > self.cfg.monitor_minutes * 60 and pool not in current_positions:
+                self.active.pop(pool, None)
+                continue
+            try:
+                state = self._state(event)
+                self.store.snapshot(pool, state)
+                self.executor.mark(state)
+                # During first two minutes, reconsider with fresh data; never auto-enter afterward.
+                if age <= 120 and not self.store.has_position(pool):
+                    # One decision per 30-second bucket, including the first sighting.
+                    bucket = min(4, int(max(0, age) // 30))
+                    bucket_key = f'decision_bucket:{pool}'
+                    if self.store.get_meta(bucket_key) == str(bucket):
+                        continue
+                    self.store.set_meta(bucket_key, str(bucket))
+                    normalized, raw = self.engine.decide(state)
+                    gates = evaluate(state, normalized, self.limits)
+                    if gates['approved']:
+                        order = self.executor.buy(state)
+                        gates['execution'] = order
+                        if order['action'] != 'buy':
+                            gates['approved'], gates['action'] = False, 'skip'
+                    self.store.put_decision(pool, state, normalized, raw, gates)
+            except Exception as exc:
+                log.exception('Unable to update pool %s', pool)
+                self.store.set_meta('pool_error', f'{pool}: {exc}'[:450])
