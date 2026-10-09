@@ -15,8 +15,8 @@ echo This updater preserves .env, data and .venv and backs up changed source fil
 pause
 
 set "HOODSCOUT_UPDATE_WORK=%TEMP%\hoodscout-update-%RANDOM%-%RANDOM%"
-set "HOODSCOUT_UPDATE_URL=https://github.com/RAVENSHIRE/RobinhoodBotV1/raw/e8b0b623a0c04b63d03d7b51ade7514bd80817c0/downloads/hoodscout-update.zip"
-set "HOODSCOUT_UPDATE_SHA=4a4aaa1e6e526ebe6b7976e986ae6b6c9fb05b738c75ecfb0dd74e795bdedf7a"
+set "HOODSCOUT_UPDATE_URL=https://github.com/RAVENSHIRE/RobinhoodBotV1/raw/70573661e40f77b9d3b04ed88a389c6cd60aa802/downloads/hoodscout-jev-update.zip"
+set "HOODSCOUT_UPDATE_SHA=6028f18f491ee48b65372813058d0a326dfaea50dcc72ad6e137cd7233e814fd"
 
 echo Downloading and verifying the tested update...
 powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $work=$env:HOODSCOUT_UPDATE_WORK; New-Item -ItemType Directory -Path $work | Out-Null; $zip=Join-Path $work 'update.zip'; Invoke-WebRequest -UseBasicParsing -Uri $env:HOODSCOUT_UPDATE_URL -OutFile $zip; if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant() -ne $env:HOODSCOUT_UPDATE_SHA) { throw 'Update checksum mismatch; nothing has been installed' }; Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $work 'unpacked')"
@@ -32,7 +32,8 @@ if errorlevel 1 goto failed
 
 set "DATA_DIR=./data/paper"
 set "LIVE_MODE=false"
-set "DECISION_PROVIDER=stub"
+rem Let the local .env choose stub or a previously verified JEV setup.
+set "DECISION_PROVIDER="
 set "PRICE_FEED_MODE=coinbase_kraken"
 set "RPC_URL=https://rpc.mainnet.chain.robinhood.com"
 set "CHAIN_ID=4663"

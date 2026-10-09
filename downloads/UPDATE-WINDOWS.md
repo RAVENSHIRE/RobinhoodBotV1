@@ -1,5 +1,7 @@
 # HoodScout discovery and price-feed update
 
+**Current JEV update:** use `hoodscout-jev-launcher.zip`, extract it and double-click `Connect-JEV-and-Start-HoodScout.cmd`. See `JEV-WINDOWS.txt` for the hidden-key setup and diagnostics. It includes the discovery/price fixes below plus the corrected TypeSafe API contract, connection health and 75 passing tests. The current standard launcher also installs that cumulative update and honors the provider in `.env`. The historical manual instructions below keep the stub selected; use the dedicated JEV launcher when connecting your new API key.
+
 ## Automatic download and startup
 
 Download `Update-and-Start-HoodScout.cmd` from this folder and double-click it in Windows. Stop the previous server with Ctrl+C first. The CMD file invokes noninteractive PowerShell without loading the broken PSReadLine paste handler; no PowerShell block needs to be pasted. It locates the existing project under `%USERPROFILE%\Desktop\dev\hoodscout-robinhood` (or accepts the project folder dragged onto the CMD file), downloads the ZIP from its immutable Git commit, verifies SHA-256, extracts it into a new temporary directory, runs the protective updater and tests, then starts the PAPER server and opens the browser after the API responds. It leaves errors visible if anything fails. No administrator access or PowerShell execution-policy change is required.

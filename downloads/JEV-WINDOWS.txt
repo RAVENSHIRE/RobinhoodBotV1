@@ -1,0 +1,34 @@
+HOODSCOUT - CONNECT JEV ON WINDOWS
+
+1. Stop the existing HoodScout server with Ctrl+C. Leave VS Code open.
+2. Extract All from this ZIP. Double-click Connect-JEV-and-Start-HoodScout.cmd.
+3. At the hidden prompt, paste your TypeSafe API key and press Enter.
+   The key will not appear as you type. Never send it in chat.
+4. The assistant tests JEV and saves verified settings in your local .env.
+   It then starts the PAPER dashboard and opens the browser. Keep the window open.
+
+Default project: %USERPROFILE%\Desktop\dev\hoodscout-robinhood
+If yours is elsewhere, drag your project folder onto the CMD file.
+
+The launcher downloads a fixed GitHub revision, checks SHA-256, applies the update
+and runs 75 tests first. The updater preserves .env, .venv and data, backs up
+changed source files and stops on local source conflicts. No new Python package
+is required. Your existing .venv must already contain the project dependencies.
+
+The setup check and scanner startup each make one small model inference, which
+may consume TypeSafe credits. Real pool decisions can consume further credits.
+HTTP 401 means the key was rejected; HTTP 402 indicates credits/billing;
+HTTP 403 indicates account access or a network policy restriction. Errors remain
+visible in the terminal. A failed setup check does not change .env.
+
+JEV OK means a response has been validated in this running server; key presence
+alone does not count. After five minutes without a successful call, the status
+becomes JEV CHECK until another request succeeds. PAPER entry still requires all
+independent liquidity, current price, quote-age and risk gates. This update does
+not enable live transaction broadcasting.
+
+The cloud verified both upgrade paths, 75 Python tests and the official TypeSafe
+SDK request/response schema. Windows launcher execution and an authenticated JEV
+call must be verified on your Windows machine.
+
+Use this new launcher instead of older copies which forced STUB.
