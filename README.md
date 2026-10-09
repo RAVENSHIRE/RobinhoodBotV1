@@ -79,7 +79,7 @@ DECISION_PROVIDER=jev
 TYPESAFE_API_KEY=your_secret_key
 ```
 
-The adapter sends `state`, `questions` and `model=jev-latest` to `https://api.typesafe.ai/v1/systemone` and normalizes `action`, `confidence`, and `risk_score`. Its exact production API contract has **not** been verified in this environment. Malformed/error responses fail closed to HOLD. The dashboard never exposes the key.
+The adapter sends `state`, `questions` and `model=jev-latest` to `https://api.typesafe.ai/v1/systemone` using the contract in the official TypeSafe SDK 0.7.4. Score questions require an ordered `criteria` list. JEV scores that list from 0 to 9; HoodScout converts it to risk 1 to 10. The lower of action confidence and risk confidence is used by the confidence gate. Malformed/error responses fail closed to HOLD. Request/response fixtures were checked against the SDK OpenAPI models, but a real authenticated call must still pass on your machine. The dashboard never exposes the key.
 
 The hard gates operate **after** the model and independently check min TVL proxy ($20K), verified fresh quoter execution quote, strictly less than 3% quote impact, observed 1–100% trailing volatility, min confidence 0.70, max risk score 4, renounced ownership and real bytecode. Also, `LIVE_MODE=true` is **not sufficient to trade**: the live executor refuses to send any transaction in this release. No real private keys required or accepted.
 
@@ -159,3 +159,20 @@ $env:QUOTER_V2_ADDRESS = '0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7'
 The Quoter address matches Uniswap's sdk-core Robinhood registry and returned the configured factory/WETH and a valid quote at block 84278943. This is functional evidence, not a bytecode audit or token sellability proof. Each running monitor checks its factory/WETH before quoting. Previously rejected Quoters remain rejected. Quotes are requested only for observed initialized WETH pools with validated reference prices.
 
 Keep the stub until a decision provider is separately validated. This update does not fabricate buy activity, implement Swap tracking or automatically enable entries. Live broadcasting remains unavailable.
+
+
+## JEV setup and connection diagnostics
+
+Obtain an API key from your own TypeSafe account at https://typesafe.ai. API inference may require account credits. Do not paste keys into chat, GitHub or command-line arguments.
+
+From the project directory, run `.venv\Scripts\python.exe -m hoodscout.cli jev-setup` on Windows (or `.venv/bin/python -m hoodscout.cli jev-setup` on Linux). It asks for the key without echo, performs one small explicitly synthetic inference with no executor, and saves the verified settings to local `.env` only after a valid API response. Other `.env` entries are preserved and the replacement is atomic. Failed checks leave the file unchanged. The key stays in your local ignored `.env`. Restart HoodScout afterward. No wallet key is used.
+
+`hoodscout jev-check` makes the same no-trade connection check and returns a nonzero exit code on failure. It reports safe status codes for missing keys, 401 authentication failures, 402 credits/billing, 403 access, invalid request/model, rate limits, network errors, timeouts and invalid responses. It does not print credentials or raw error bodies. There are no automatic API retries that could multiply billable checks.
+
+When the real scanner starts with `DECISION_PROVIDER=jev`, it performs one synthetic connection check. Real pool observations are sent only during the existing decision windows. Each API inference may consume credits. All existing independent liquidity, price, quote-age and risk gates remain active after a model BUY. The connectivity check itself never opens a position, regardless of the model's answer. Existing limitations such as missing swap/buyer tracking remain.
+
+`/api/state` now includes `model_status`. `model_connected` becomes true only after an actual response is validated, not merely because a key exists. It clears after an error or when the most recent successful check is older than five minutes; that age limit does not assert the service is down and a subsequent request checks it again. Model health is in-process and must be rechecked after restart. `serve --no-scan` does not call JEV automatically.
+
+The standard Windows launcher honors `.env` instead of overriding it with STUB. The dedicated JEV launcher performs the update, local hidden-key setup, check and restart. Avoid starting old launcher copies that still force STUB. Set `JEV_TIMEOUT_SECONDS` to adjust the request timeout; slow responses may expire the separate quote-age gate, which remains mandatory.
+
+Contract reference: https://github.com/typesafe-ai/typesafe-sdk-python and https://pypi.org/project/typesafe-sdk/0.7.4/ . Verified wheel SHA-256: `61cf3f2fe9da20b68c3d3fe2fb76bbb2f35f8c4a9a65a6b81c43a535d2a53210`. This project uses its existing httpx dependency; installing the SDK is not required.

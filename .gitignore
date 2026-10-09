@@ -1,4 +1,5 @@
 .env
+.hoodscout-jev-*.tmp
 .venv/
 __pycache__/
 .pytest_cache/

@@ -68,3 +68,14 @@ def test_app_responds_without_scanner(tmp_path):
         assert status['pool_discovery_topic_version'] == 2
         assert c.get('/api/replay',params={'pool':POOL}).json()['status']=='unknown_pool'
         assert c.get('/api/backtest').json()['summary']['attempted']==0
+
+
+def test_configured_model_is_not_reported_connected_before_request(tmp_path):
+    config=replace(load_config(),data_dir=tmp_path,decision_provider='jev',typesafe_api_key='synthetic-secret')
+    assert 'synthetic-secret' not in repr(config)
+    with TestClient(create_app(config,start_scanner=False)) as client:
+        state=client.get('/api/state').json()
+        assert state['model_connected'] is False
+        assert state['model_status']['status']=='not_checked'
+        assert state['model_status']['configured'] is True
+        assert 'synthetic-secret' not in client.get('/api/state').text

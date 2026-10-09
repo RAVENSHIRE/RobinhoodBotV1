@@ -7,7 +7,8 @@ VALID = {'contract_has_code': True, 'owner_renounced': True, 'liquidity_verified
 BUY = {'action': 'buy', 'confidence': .89, 'risk_score': 3}
 
 def test_normalize_nested_jev():
-    payload = {'answers':{'action':{'choice':'buy','confidence':.9},'risk_score':{'score':3}}}
+    payload = {'answers':{'action':{'type':'choice','choice':'buy','confidence':.9},
+                          'risk_score':{'type':'score','score':2,'confidence':.95}}}
     assert normalize_decision(payload) == {'action':'buy', 'confidence':.9, 'risk_score':3.0}
 
 

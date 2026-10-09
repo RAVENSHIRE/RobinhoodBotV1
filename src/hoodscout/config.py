@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import os
 import math
@@ -48,7 +48,7 @@ class Config:
     paper_fee_bps: float
     live_mode: bool
     decision_provider: str
-    typesafe_api_key: str | None
+    typesafe_api_key: str | None = field(repr=False)
     jev_endpoint: str
     jev_model: str
     data_dir: Path
@@ -60,6 +60,7 @@ class Config:
     price_max_divergence_pct: float = 1.0
     price_future_tolerance_seconds: float = 5.0
     quote_max_age_seconds: float = 15.0
+    jev_timeout_seconds: float = 10.0
 
 
 def load_config(env_path: str | None = None) -> Config:
@@ -106,6 +107,7 @@ def load_config(env_path: str | None = None) -> Config:
         price_max_divergence_pct=float(os.getenv('PRICE_MAX_DIVERGENCE_PCT', '1')),
         price_future_tolerance_seconds=float(os.getenv('PRICE_FUTURE_TOLERANCE_SECONDS', '5')),
         quote_max_age_seconds=float(os.getenv('QUOTE_MAX_AGE_SECONDS', '15')),
+        jev_timeout_seconds=float(os.getenv('JEV_TIMEOUT_SECONDS', '10')),
     )
     if cfg.chain_id != 4663:
         raise ValueError("This project is mainnet Robinhood Chain only: CHAIN_ID must be 4663")
@@ -123,6 +125,10 @@ def load_config(env_path: str | None = None) -> Config:
         raise ValueError("ETH_USD must be positive")
     if cfg.price_feed_mode not in ('coinbase_kraken', 'off'):
         raise ValueError('PRICE_FEED_MODE must be coinbase_kraken or off')
+    if cfg.decision_provider not in ('stub', 'jev'):
+        raise ValueError('DECISION_PROVIDER must be stub or jev')
+    if not math.isfinite(cfg.jev_timeout_seconds) or not 0 < cfg.jev_timeout_seconds <= 120:
+        raise ValueError('JEV_TIMEOUT_SECONDS must be finite and in (0, 120]')
     for value in (cfg.price_refresh_seconds, cfg.price_max_age_seconds,
                   cfg.price_max_divergence_pct, cfg.quote_max_age_seconds):
         if not math.isfinite(value) or value <= 0:

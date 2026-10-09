@@ -20,13 +20,16 @@ console = Console()
 
 def main():
     parser = argparse.ArgumentParser(description='Robinhood Chain pool monitor — paper trading only')
-    parser.add_argument('command', choices=['serve', 'scan', 'demo', 'backtest'])
+    parser.add_argument('command', choices=['serve', 'scan', 'demo', 'backtest', 'jev-check', 'jev-setup'])
     parser.add_argument('--no-scan', action='store_true', help='Dashboard without RPC connectivity')
     parser.add_argument('--entry-second', type=int, default=60)
     parser.add_argument('--hold-seconds', type=int, default=300)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     cfg = load_config()
+    if args.command in ('jev-check', 'jev-setup'):
+        from .jev_setup import check_jev, setup_jev
+        raise SystemExit((check_jev if args.command == 'jev-check' else setup_jev)(cfg))
     if args.command == 'demo':
         from .demo import seed_demo
         demo_path = Path('data/demo')
