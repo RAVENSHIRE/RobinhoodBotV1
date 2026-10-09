@@ -1,5 +1,13 @@
 # HoodScout discovery and price-feed update
 
+## Automatic download and startup
+
+Download `Update-and-Start-HoodScout.cmd` from this folder and double-click it in Windows. Stop the previous server with Ctrl+C first. The CMD file invokes noninteractive PowerShell without loading the broken PSReadLine paste handler; no PowerShell block needs to be pasted. It locates the existing project under `%USERPROFILE%\Desktop\dev\hoodscout-robinhood` (or accepts the project folder dragged onto the CMD file), downloads the ZIP from its immutable Git commit, verifies SHA-256, extracts it into a new temporary directory, runs the protective updater and tests, then starts the PAPER server and opens the browser after the API responds. It leaves errors visible if anything fails. No administrator access or PowerShell execution-policy change is required.
+
+The CMD launcher has not been executed on Windows from the cloud environment. Its ZIP payload/updater and Python application were validated separately as described below. Live two-source price readiness must still be checked in the dashboard.
+
+## Manual update
+
 1. Stop the old HoodScout server with Ctrl+C. Leave VS Code open.
 2. Extract this ZIP into `Downloads/hoodscout-update` so that `apply_update.py`, `manifest.json` and `payload` are in that directory.
 3. In PowerShell, from your existing project folder, run:
