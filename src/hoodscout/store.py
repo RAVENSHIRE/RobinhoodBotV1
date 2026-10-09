@@ -33,7 +33,18 @@ class Store:
               opened REAL NOT NULL, closed REAL, size_usd REAL NOT NULL,
               units REAL NOT NULL, entry_price REAL NOT NULL, exit_price REAL,
               realized_pnl REAL, exit_reason TEXT, mode TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS swaps (
+              pool TEXT NOT NULL, block INTEGER NOT NULL, log_index INTEGER NOT NULL,
+              tx_hash TEXT NOT NULL, ts INTEGER NOT NULL, sender TEXT NOT NULL,
+              recipient TEXT NOT NULL, amount0 TEXT NOT NULL, amount1 TEXT NOT NULL,
+              sqrt_price_x96 TEXT NOT NULL, liquidity TEXT NOT NULL, tick INTEGER NOT NULL,
+              tx_from TEXT, PRIMARY KEY (pool, block, log_index));
+            CREATE INDEX IF NOT EXISTS swaps_pool_block ON swaps(pool, block, log_index);
+            CREATE INDEX IF NOT EXISTS swaps_tx_hash ON swaps(tx_hash);
             ''')
+            # Additive migrations only: existing pools, decisions and positions are preserved.
+            db.execute("INSERT INTO metadata VALUES('schema_version','2') "
+                       "ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE CAST(value AS INTEGER) < 2")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=15)
@@ -49,6 +60,48 @@ class Store:
     def set_meta(self, key: str, value: str):
         with self.lock, self._connect() as db:
             db.execute('INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
+
+    def delete_meta(self, key: str):
+        with self.lock, self._connect() as db:
+            db.execute('DELETE FROM metadata WHERE key=?', (key,))
+
+    def kill_switch(self) -> bool:
+        return self.get_meta('kill_switch') == '1'
+
+    def set_kill_switch(self, enabled: bool):
+        self.set_meta('kill_switch', '1' if enabled else '0')
+
+    def put_swaps(self, swaps: list) -> int:
+        """Insert decoded swaps; (pool, block, log_index) dedupes restarts and overlaps."""
+        if not swaps:
+            return 0
+        rows = [(s.pool.lower(), s.block, s.log_index, s.transaction_hash.lower(), s.timestamp,
+                 s.sender.lower(), s.recipient.lower(), str(s.amount0), str(s.amount1),
+                 str(s.sqrt_price_x96), str(s.liquidity), s.tick) for s in swaps]
+        with self.lock, self._connect() as db:
+            before = db.total_changes
+            db.executemany('INSERT OR IGNORE INTO swaps(pool,block,log_index,tx_hash,ts,sender,recipient,'
+                           'amount0,amount1,sqrt_price_x96,liquidity,tick) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)', rows)
+            return db.total_changes - before
+
+    def swaps(self, pool: str, max_block: int | None = None, limit=5000) -> list[dict]:
+        with self.lock, self._connect() as db:
+            rows = db.execute('SELECT * FROM swaps WHERE pool=? AND block<=? ORDER BY block,log_index LIMIT ?',
+                              (pool.lower(), max_block if max_block is not None else 2**62, limit))
+            return [{'pool': r['pool'], 'block': r['block'], 'log_index': r['log_index'],
+                     'transaction_hash': r['tx_hash'], 'timestamp': r['ts'], 'sender': r['sender'],
+                     'recipient': r['recipient'], 'amount0': r['amount0'], 'amount1': r['amount1'],
+                     'sqrt_price_x96': r['sqrt_price_x96'], 'tick': r['tick'], 'tx_from': r['tx_from']}
+                    for r in rows]
+
+    def unresolved_transactions(self, limit=40) -> list[str]:
+        with self.lock, self._connect() as db:
+            return [r[0] for r in db.execute(
+                'SELECT tx_hash FROM swaps WHERE tx_from IS NULL GROUP BY tx_hash ORDER BY MIN(block) LIMIT ?', (limit,))]
+
+    def set_transaction_sender(self, tx_hash: str, sender: str):
+        with self.lock, self._connect() as db:
+            db.execute('UPDATE swaps SET tx_from=? WHERE tx_hash=? AND tx_from IS NULL', (sender.lower(), tx_hash.lower()))
 
     def put_pool(self, event: dict):
         with self.lock, self._connect() as db:
@@ -126,11 +179,12 @@ class Store:
             pool_count = db.execute('SELECT COUNT(*) FROM pools').fetchone()[0]
             snap_count = db.execute('SELECT COUNT(*) FROM snapshots').fetchone()[0]
             dec_count = db.execute('SELECT COUNT(*) FROM decisions').fetchone()[0]
+            swap_count = db.execute('SELECT COUNT(*) FROM swaps').fetchone()[0]
             buy_count = db.execute("SELECT COUNT(*) FROM positions WHERE mode='PAPER'").fetchone()[0]
             closed = db.execute('SELECT realized_pnl FROM positions WHERE closed IS NOT NULL').fetchall()
             pnl = sum(float(r[0]) for r in closed if r[0] is not None)
             wins = sum(float(r[0]) > 0 for r in closed if r[0] is not None)
-            return {'pools': pool_count, 'snapshots': snap_count, 'decisions': dec_count,
+            return {'pools': pool_count, 'snapshots': snap_count, 'decisions': dec_count, 'swaps': swap_count,
                     'positions': buy_count, 'closed_positions': len(closed),
                     'realized_pnl_usd': round(pnl, 2),
                     'win_rate_pct': round(100 * wins / len(closed), 1) if closed else None}

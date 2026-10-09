@@ -31,7 +31,12 @@ def seed_demo(store: Store):
                      'liquidity_usd': float(20000 + i * 2700), 'tvl_usd_estimate': float(20000 + i * 2700),
                      'liquidity_verified': True, 'price_impact_pct': 0.4 + i * 0.07,
                      'volatility_pct': 2.1 + 0.2 * j, 'owner_renounced': True,
-                     'contract_has_code': True, 'quote_tokens_out': 20 / price}
+                     'contract_has_code': True, 'quote_tokens_out': 20 / price,
+                     'swap_tracking': True, 'swap_history_complete': True,
+                     'buy_count': 3 + j * (4 if winner else 1), 'sell_count': j * (1 if winner else 3),
+                     'unique_buyers': 2 + j * (3 if winner else 1),
+                     'buy_volume_usd': round(400.0 * (j + 1) * (2 if winner else 1), 2),
+                     'top_buyer_share_pct': 24.0 if winner else 61.0, 'activity_lag_seconds': 2.0}
             store.snapshot(pool, state, timestamp + elapsed)
             if j == 2:
                 action = 'buy' if i % 3 == 0 else 'skip'

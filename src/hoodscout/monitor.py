@@ -7,13 +7,14 @@ import time
 
 from .chain import ChainReader, PoolEvent
 from .config import Config
-from .decision_engine import DecisionEngine
+from .decision_engine import DecisionEngine, hold
 from .execution import PaperExecutor
-from .gates import evaluate, RiskLimits
+from .gates import evaluate, deterministic_reasons, RiskLimits
 from .quote import quote_buy
 from .pricing import EthUsdFeed
 from .rpc import RPC, RpcError
 from .store import Store
+from .swaps import swap_metrics
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ class Monitor:
         self.limits = RiskLimits(cfg.min_liquidity_usd, cfg.min_volatility_pct, cfg.max_volatility_pct, cfg.min_confidence,
                                  cfg.max_risk_score, cfg.max_price_impact_pct, cfg.owner_renounced_required,
                                  cfg.price_max_age_seconds, cfg.quote_max_age_seconds,
-                                 cfg.price_future_tolerance_seconds)
+                                 cfg.price_future_tolerance_seconds, cfg.min_unique_buyers,
+                                 cfg.max_top_buyer_share_pct, cfg.activity_max_lag_seconds)
         self.active: dict[str, PoolEvent] = {}
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -45,6 +47,8 @@ class Monitor:
         self.ready = False
         self._cursor = None
         self._quoter_verified = None
+        # Last block whose swaps are fully recorded, and when that was known to be complete.
+        self._synced: dict | None = None
 
     def start(self):
         if self.thread and self.thread.is_alive():
@@ -83,6 +87,7 @@ class Monitor:
                 try:
                     self.price_feed.refresh()
                     self.scan_once()
+                    self.resolve_traders()
                     self.update_active()
                     self.last_error = None
                     self.store.set_meta('scanner_last_error', '')
@@ -99,7 +104,12 @@ class Monitor:
         finally:
             self.ready = False
 
+    @staticmethod
+    def _coverage_key(pool: str) -> str:
+        return f'swap_coverage_from:{pool.lower()}'
+
     def scan_once(self):
+        checked_at = time.time()
         tip = self.rpc.block_number()
         if self._cursor is None:
             # Versioned cursor: the old topic never found genuine PoolCreated events.
@@ -109,16 +119,44 @@ class Monitor:
         # Bounded catchup. Only advance the cursor after the full chunk was read.
         for _ in range(3):
             if self._cursor >= tip:
-                return
+                break
             end = min(tip, self._cursor + self.cfg.max_block_range)
             for event in self.reader.discover(self._cursor + 1, end):
                 self.store.put_pool(asdict(event))
                 if (event.address.lower() not in self.active and
                         len(self.active) < self.cfg.max_active_pools):
                     self.active[event.address.lower()] = event
+                    # Swaps for this chunk are read below, so history starts at creation.
+                    if not self.store.get_meta(self._coverage_key(event.address)):
+                        self.store.set_meta(self._coverage_key(event.address), str(event.block))
+            self._track_swaps(self._cursor + 1, end)
             self._cursor = end
             self.store.set_meta('pool_created_cursor_v2', str(self._cursor))
             self.store.set_meta('last_scanned_block', str(self._cursor))
+        # Arbitrum-style chains create no empty blocks, so a caught-up cursor is complete
+        # as of the tip check; while catching up it is complete as of the cursor block.
+        synced_at = checked_at if self._cursor >= tip else self.reader.block_time(self._cursor)
+        self._synced = {'block': self._cursor, 'at': synced_at}
+        self.store.set_meta('swap_synced_block', str(self._cursor))
+        self.store.set_meta('swap_synced_at', str(synced_at))
+
+    def _track_swaps(self, start: int, end: int):
+        pools = list(self.active)
+        for pool in pools:
+            if not self.store.get_meta(self._coverage_key(pool)):
+                self.store.set_meta(self._coverage_key(pool), str(start))
+        self.store.put_swaps(self.reader.swaps(pools, start, end))
+
+    def resolve_traders(self):
+        """Look up the transaction sender (EOA) for recorded swaps, bounded per cycle."""
+        for tx_hash in self.store.unresolved_transactions(self.cfg.max_tx_lookups_per_cycle):
+            try:
+                sender = self.rpc.transaction_sender(tx_hash)
+            except RpcError as exc:
+                log.warning('Transaction sender lookup paused: %s', exc)
+                return
+            # '' marks an unavailable sender: never counted as a wallet, never retried forever.
+            self.store.set_transaction_sender(tx_hash, sender or '')
 
     def _verify_quoter(self) -> bool:
         if not self.cfg.quoter:
@@ -159,8 +197,11 @@ class Monitor:
         state['volatility_pct'] = (100 * ((max(past_prices + [state['price_usd']]) /
             min(past_prices + [state['price_usd']])) - 1)
             if past_prices and state['price_usd'] is not None else None)
-        state['buy_count'] = None  # No fake buyer counts: swaps/wallet traces not implemented in MVP.
-        state['sell_count'] = None
+        state['volatility_source'] = 'snapshots_60s' if state['volatility_pct'] is not None else None
+        state.update(self._activity(event, state, now))
+        if state.get('swap_price_range_pct_60s') is not None:
+            state['volatility_pct'] = state['swap_price_range_pct_60s']
+            state['volatility_source'] = 'swaps_60s'
         if (self.cfg.quoter and reference['verified'] and state.get('sqrt_price_x96')
             and state.get('tvl_usd_estimate') is not None):
             try:
@@ -184,6 +225,37 @@ class Monitor:
                          liquidity_usd=None, tvl_usd_estimate=None)
         return state
 
+    def _activity(self, event: PoolEvent, state: dict, now: float) -> dict:
+        unknown = {'swap_tracking': False, 'activity_lag_seconds': None, 'buy_count': None,
+                   'sell_count': None, 'unique_buyers': None, 'top_buyer_share_pct': None}
+        weth = self.cfg.weth.lower()
+        if self._synced is None or weth not in (event.token0.lower(), event.token1.lower()):
+            return unknown
+        coverage = self.store.get_meta(self._coverage_key(event.address))
+        rows = self.store.swaps(event.address, max_block=self._synced['block'])
+        reference = state.get('eth_usd_reference') if state.get('eth_usd_verified') else None
+        metrics = swap_metrics(rows, weth_is_token0=event.token0.lower() == weth,
+                               token_decimals=state.get('decimals'), as_of=now, eth_usd=reference,
+                               history_complete=coverage is not None and int(coverage) <= event.block)
+        metrics['activity_lag_seconds'] = round(now - self._synced['at'], 3)
+        metrics['swap_synced_block'] = self._synced['block']
+        return metrics
+
+    def _decide(self, state: dict) -> tuple[dict, dict]:
+        if self.store.kill_switch():
+            return hold('kill_switch'), {'provider': self.cfg.decision_provider, 'sent': False,
+                                         'reason': 'kill_switch'}
+        if self.cfg.decision_provider == 'jev' and self.cfg.jev_call_policy == 'prefiltered':
+            # Each JEV call may cost credits. If the application gates already reject the
+            # strongest possible model answer, the model cannot change the outcome.
+            blocked = deterministic_reasons(state, self.limits)
+            if blocked:
+                return ({'action': 'skip', 'confidence': 0.0, 'risk_score': 10.0,
+                         'error': 'not_sent_deterministic_gates_failed'},
+                        {'provider': 'jev', 'sent': False, 'reason': 'deterministic_gates_failed',
+                         'prefilter_reasons': blocked})
+        return self.engine.decide(state)
+
     def update_active(self):
         now = time.time()
         current_positions = {p['pool'] for p in self.store.open_positions()}
@@ -191,6 +263,8 @@ class Monitor:
             age = now - event.timestamp
             if age > self.cfg.monitor_minutes * 60 and pool not in current_positions:
                 self.active.pop(pool, None)
+                # Swaps stop being recorded, so any later history would have gaps.
+                self.store.delete_meta(self._coverage_key(pool))
                 continue
             try:
                 state = self._state(event)
@@ -204,8 +278,11 @@ class Monitor:
                     if self.store.get_meta(bucket_key) == str(bucket):
                         continue
                     self.store.set_meta(bucket_key, str(bucket))
-                    normalized, raw = self.engine.decide(state)
+                    normalized, raw = self._decide(state)
                     gates = evaluate(state, normalized, self.limits)
+                    if self.store.kill_switch():
+                        gates.update(approved=False, action='skip',
+                                     reasons=gates['reasons'] + ['kill_switch'])
                     if gates['approved']:
                         order = self.executor.buy(state)
                         gates['execution'] = order

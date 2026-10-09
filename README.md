@@ -81,7 +81,7 @@ TYPESAFE_API_KEY=your_secret_key
 
 The adapter sends `state`, `questions` and `model=jev-latest` to `https://api.typesafe.ai/v1/systemone` using the contract in the official TypeSafe SDK 0.7.4. Score questions require an ordered `criteria` list. JEV scores that list from 0 to 9; HoodScout converts it to risk 1 to 10. The lower of action confidence and risk confidence is used by the confidence gate. Malformed/error responses fail closed to HOLD. Request/response fixtures were checked against the SDK OpenAPI models, but a real authenticated call must still pass on your machine. The dashboard never exposes the key.
 
-The hard gates operate **after** the model and independently check min TVL proxy ($20K), verified fresh quoter execution quote, strictly less than 3% quote impact, observed 1–100% trailing volatility, min confidence 0.70, max risk score 4, renounced ownership and real bytecode. Also, `LIVE_MODE=true` is **not sufficient to trade**: the live executor refuses to send any transaction in this release. No real private keys required or accepted.
+The hard gates operate **after** the model and independently check min TVL proxy ($20K), verified fresh quoter execution quote, strictly less than 3% quote impact, observed 1–100% trailing volatility, at least 3 unique buyers, top buyer at most 50% of buy volume, swap data no older than 30 seconds, min confidence 0.70, max risk score 4, renounced ownership and real bytecode. Also, `LIVE_MODE=true` is **not sufficient to trade**: the live executor refuses to send any transaction in this release. No real private keys required or accepted.
 
 ## Research replay
 
@@ -103,7 +103,7 @@ Persisted files under `DATA_DIR`:
 
 1. **Read-only scanning + paper mode.** Live broadcasting is deliberately unavailable; this project is not a functioning live sniper.
 2. **Launch detection is pool creation, not token contract deployment**; a pool can appear uninitialized or receive liquidity later.
-3. **No measured unique buyer count yet.** That requires dedicated Swap event decoding, transaction sender tracking and wallet classification, which is a future module. `buy_count` and `sell_count` are `null` instead of fabricated.
+3. **Swap activity covers watched pools only.** Buyers/sellers come from decoded Uniswap V3 Swap events of pools in the active watch list, identified by transaction sender. There is no wallet clustering, bot labelling or holder-balance indexing; `holder_concentration` stays `null`.
 4. **No historical backfill of months of tokens.** Start on the live stream; restore limited recent pool state from SQLite after restart.
 5. **Research price reference, not an on-chain oracle.** Coinbase and Kraken last-trade prices are refreshed and cross-checked. Both must be fresh. Exchange prices do not prove bridged WETH redeemability, chain-local USD value or executable sell prices. Static `ETH_USD` is ignored by the scanner.
 6. **A quote is not sellability proof.** The current MVP does not simulate a complete buy/approve/sell round trip or handle fee-on-transfer tokens.
@@ -112,11 +112,29 @@ Persisted files under `DATA_DIR`:
 9. **Research stop/take-profit is spot-derived**, not an executable sell quote, and excludes gas/MEV. Paper P&L may overstate attainable results.
 10. The current scanner has no optimized throughput for extremely high launch rates; use an indexed data source/robust provider before scaling.
 
+## Swap activity tracking
+
+For every watched WETH pool the scanner reads Uniswap V3 `Swap` events (`0xc42079f9…ca67`) in the same bounded block chunks as pool discovery, so a pool discovered by the scanner has swap history from its creation block. Swaps are stored in SQLite and deduplicated by pool, block and log index, which makes restarts and overlapping reads harmless. The transaction sender of each swap (`eth_getTransactionByHash`) identifies the trader, because the `sender` field of a Swap is usually a router. Lookups are bounded by `MAX_TX_LOOKUPS_PER_CYCLE` and catch up over later cycles.
+
+Each snapshot records, using only swaps from blocks the scanner had fully read by then: buy/sell counts, WETH and USD buy/sell volume, net flow, unique buyers/sellers/traders, swaps per minute, peak swaps per second, buys and unique buyers in the last 30 seconds versus the 30 seconds before (buyer acceleration), top and top-3 buyer share of buy volume, wallets that both bought and sold, same-block round trips, and the 60-second realized price range from post-swap prices. When complete swap history exists, that swap-based range replaces the coarser snapshot-based `volatility_pct` (`volatility_source` says which one was used).
+
+Wallet metrics are withheld (`null`) while any affected swap still has an unresolved sender, and concentration and swap-based volatility require complete history since pool creation. `activity_lag_seconds` measures how far the recorded swaps trail the observation. The gates reject unknown, stale or concentrated activity: `MIN_UNIQUE_BUYERS=3`, `MAX_TOP_BUYER_SHARE_PCT=50`, `ACTIVITY_MAX_LAG_SECONDS=30`. Each extra watched pool adds no extra log request; each new transaction adds one sender lookup.
+
+## JEV credits, kill switch and replay statistics
+
+`JEV_CALL_POLICY=prefiltered` (default) sends a pool to JEV only when every non-model gate would already approve the strongest possible model answer. If a deterministic gate fails, no model answer could approve an entry, so no credits are spent; the audit record then shows `sent: false` and the blocking reasons. `JEV_CALL_POLICY=all` restores one call per 30-second decision window for research.
+
+The dashboard **KILL SWITCH** button (or `POST /api/kill-switch` with `{"enabled": true}` and header `X-HoodScout-Control: 1`) immediately blocks JEV calls and every new paper entry, and survives restarts because it is stored in the database. Existing paper positions continue to be marked and closed. When `HOST` is a loopback address the server rejects requests whose `Host` header is not `127.0.0.1`/`localhost`, which stops DNS-rebinding pages from using the local API.
+
+Replay/backtest summaries now report expectancy per trade, total cost haircut, maximum drawdown of the cumulative net P&L, exclusions by reason, and an in-sample versus chronological-holdout split (latest 30% of usable trades). No parameters are fitted, so the holdout is only a stability check.
+
 ## Tests
 
 ```bash
 PYTHONPATH=src pytest -q
 ```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the suite on Linux and Windows with Python 3.11–3.13. The tests use only synthetic fixtures and mocks; they never contact the chain, exchanges or JEV.
 
 ## UX
 
@@ -169,7 +187,7 @@ From the project directory, run `.venv\Scripts\python.exe -m hoodscout.cli jev-s
 
 `hoodscout jev-check` makes the same no-trade connection check and returns a nonzero exit code on failure. It reports safe status codes for missing keys, 401 authentication failures, 402 credits/billing, 403 access, invalid request/model, rate limits, network errors, timeouts and invalid responses. It does not print credentials or raw error bodies. There are no automatic API retries that could multiply billable checks.
 
-When the real scanner starts with `DECISION_PROVIDER=jev`, it performs one synthetic connection check. Real pool observations are sent only during the existing decision windows. Each API inference may consume credits. All existing independent liquidity, price, quote-age and risk gates remain active after a model BUY. The connectivity check itself never opens a position, regardless of the model's answer. Existing limitations such as missing swap/buyer tracking remain.
+When the real scanner starts with `DECISION_PROVIDER=jev`, it performs one synthetic connection check. Real pool observations are sent only during the existing decision windows. Each API inference may consume credits. All existing independent liquidity, price, quote-age and risk gates remain active after a model BUY. The connectivity check itself never opens a position, regardless of the model's answer. Swap/buyer tracking is described below; wallet clustering and holder indexing are not implemented.
 
 `/api/state` now includes `model_status`. `model_connected` becomes true only after an actual response is validated, not merely because a key exists. It clears after an error or when the most recent successful check is older than five minutes; that age limit does not assert the service is down and a subsequent request checks it again. Model health is in-process and must be rechecked after restart. `serve --no-scan` does not call JEV automatically.
 

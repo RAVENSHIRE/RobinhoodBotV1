@@ -21,6 +21,9 @@ class RiskLimits:
     max_price_age_seconds: float = 60.0
     max_quote_age_seconds: float = 15.0
     future_tolerance_seconds: float = 5.0
+    min_unique_buyers: int = 3
+    max_top_buyer_share_pct: float = 50.0
+    max_activity_lag_seconds: float = 30.0
 
 
 def evaluate(state: dict, decision: dict, limits: RiskLimits, now: float | None = None) -> dict:
@@ -54,6 +57,17 @@ def evaluate(state: dict, decision: dict, limits: RiskLimits, now: float | None 
     impact = state.get('price_impact_pct')
     if not finite(impact) or not 0 <= impact < limits.max_price_impact_pct:
         reasons.append('unacceptable_or_unknown_price_impact')
+    # Launch activity comes from recorded Swap events; missing or lagging data is not "quiet".
+    lag = state.get('activity_lag_seconds')
+    if (state.get('swap_tracking') is not True or not finite(lag)
+            or not -limits.future_tolerance_seconds <= lag <= limits.max_activity_lag_seconds):
+        reasons.append('missing_or_stale_swap_activity')
+    buyers = state.get('unique_buyers')
+    if not finite(buyers) or buyers < limits.min_unique_buyers:
+        reasons.append('too_few_or_unknown_unique_buyers')
+    share = state.get('top_buyer_share_pct')
+    if not finite(share) or not 0 <= share <= limits.max_top_buyer_share_pct:
+        reasons.append('concentrated_or_unknown_buyer_share')
     confidence = decision.get('confidence')
     if not finite(confidence) or not 0 <= confidence <= 1 or confidence < limits.min_confidence:
         reasons.append('low_or_invalid_confidence')
@@ -61,3 +75,11 @@ def evaluate(state: dict, decision: dict, limits: RiskLimits, now: float | None 
     if not finite(risk) or not 1 <= risk <= 10 or risk > limits.max_risk_score:
         reasons.append('high_or_invalid_risk')
     return {'approved': not reasons, 'reasons': reasons, 'action': 'buy' if not reasons else 'skip'}
+
+
+# The strongest possible model answer: whatever this still rejects, no model answer can approve.
+PREFILTER_DECISION = {'action': 'buy', 'confidence': 1.0, 'risk_score': 1.0}
+
+
+def deterministic_reasons(state: dict, limits: RiskLimits, now: float | None = None) -> list[str]:
+    return evaluate(state, PREFILTER_DECISION, limits, now)['reasons']

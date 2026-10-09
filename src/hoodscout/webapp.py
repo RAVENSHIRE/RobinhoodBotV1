@@ -5,8 +5,10 @@ from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 import time
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
+from pydantic import BaseModel, StrictBool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .config import Config
 from .store import Store
 from .monitor import Monitor
@@ -14,6 +16,11 @@ from .replay import replay_pool, summarize_replay
 
 
 HTML_FILE = Path(__file__).parent / 'static' / 'dashboard.html'
+LOOPBACK_HOSTS = ['127.0.0.1', 'localhost', '[::1]', '::1']
+
+
+class KillSwitch(BaseModel):
+    enabled: StrictBool
 
 
 def create_app(cfg: Config, start_scanner: bool = True) -> FastAPI:
@@ -37,6 +44,9 @@ def create_app(cfg: Config, start_scanner: bool = True) -> FastAPI:
     app.state.store = store
     app.state.monitor = monitor
     app.state.config = cfg
+    if cfg.host in LOOPBACK_HOSTS:
+        # Blocks DNS-rebinding pages from reaching the local control API.
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=LOOPBACK_HOSTS)
 
     @app.get('/', response_class=HTMLResponse)
     def home():
@@ -47,6 +57,7 @@ def create_app(cfg: Config, start_scanner: bool = True) -> FastAPI:
         positions = store.positions(50)
         mode = store.get_meta('display_mode') or 'PAPER'
         price_feed = monitor.price_feed.status()
+        synced_at = store.get_meta('swap_synced_at')
         return {
             'timestamp': time.time(),
             'chain': 'Robinhood Chain', 'chain_id': cfg.chain_id,
@@ -64,6 +75,10 @@ def create_app(cfg: Config, start_scanner: bool = True) -> FastAPI:
             'pool_discovery_topic_version': 2,
             'quoter_verified': monitor._quoter_verified is True,
             'quoter_configured': bool(cfg.quoter),
+            'kill_switch': store.kill_switch(),
+            'jev_call_policy': cfg.jev_call_policy,
+            'swap_tracking': {'synced_block': store.get_meta('swap_synced_block'),
+                              'synced_at': float(synced_at) if synced_at else None},
             'metrics': stats,
             'equity': store.equity_curve(),
             'positions': positions,
@@ -74,6 +89,14 @@ def create_app(cfg: Config, start_scanner: bool = True) -> FastAPI:
     @app.get('/api/state')
     def state():
         return bundle()
+
+    @app.post('/api/kill-switch')
+    def kill_switch(body: KillSwitch, x_hoodscout_control: str | None = Header(None)):
+        # A custom header forces a CORS preflight, which this API never grants to other sites.
+        if x_hoodscout_control != '1':
+            raise HTTPException(status_code=403, detail='Missing X-HoodScout-Control header')
+        store.set_kill_switch(body.enabled)
+        return {'kill_switch': store.kill_switch()}
 
     @app.get('/api/stream')
     async def stream():

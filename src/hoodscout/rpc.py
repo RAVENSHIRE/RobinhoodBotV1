@@ -52,8 +52,15 @@ class RPC:
             raise RpcError("Missing block")
         return int(result["timestamp"], 16)
 
-    def logs(self, address: str, topic: str, start: int, end: int) -> list[dict]:
+    def logs(self, address: str | list[str], topic: str, start: int, end: int) -> list[dict]:
         return self.call("eth_getLogs", [{"address": address, "topics": [topic], "fromBlock": hex(start), "toBlock": hex(end)}])
+
+    def transaction_sender(self, tx_hash: str) -> str | None:
+        result = self.call("eth_getTransactionByHash", [tx_hash])
+        sender = result.get("from") if isinstance(result, dict) else None
+        if not isinstance(sender, str) or len(sender) != 42:
+            return None
+        return sender.lower()
 
     def code(self, address: str) -> bool:
         value = self.call("eth_getCode", [address, "latest"])

@@ -18,6 +18,7 @@ def test_monitor_persists_cursor_and_pools(tmp_path):
     monitor.rpc.block_number=Mock(return_value=100)
     event=PoolEvent(POOL,WETH,TOKEN,10000,200,95,1600000000,'0x'+'dd'*32,0)
     monitor.reader.discover=Mock(return_value=[event])
+    monitor.reader.swaps=Mock(return_value=[])
     monitor.scan_once()
     assert store.get_meta('last_scanned_block')=='100'
     assert store.pools()[0]['address']==POOL
@@ -33,6 +34,7 @@ def test_old_cursor_is_recovered_with_a_bounded_window_and_new_cursor_is_reused(
     monitor = Monitor(cfg, store)
     monitor.rpc.block_number = Mock(return_value=100)
     monitor.reader.discover = Mock(return_value=[])
+    monitor.reader.swaps = Mock(return_value=[])
     try:
         monitor.scan_once()
         monitor.reader.discover.assert_called_once_with(91, 100)
@@ -121,7 +123,8 @@ def test_monitor_decision_to_paper_pipeline(tmp_path):
            'quote_tokens_out':25.0,'liquidity_usd':30000.0, 'liquidity_verified':True,
            'volatility_pct':5.0,'price_impact_pct':0.5,'owner_renounced':True,
            'contract_has_code':True, 'eth_usd_verified':True, 'eth_usd_reference':2500,
-           'eth_usd_timestamp':time.time(), 'quote_observed_at':time.time()}
+           'eth_usd_timestamp':time.time(), 'quote_observed_at':time.time(),
+           'swap_tracking':True, 'activity_lag_seconds':1.0, 'unique_buyers':5, 'top_buyer_share_pct':30.0}
     monitor._state=Mock(return_value=state)
     monitor.engine.decide=Mock(return_value=({'action':'buy','confidence':0.87,'risk_score':2}, {'model':'mock'}))
     monitor.update_active()

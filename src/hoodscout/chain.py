@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from .rpc import RPC, RpcError, read_word, as_address, address_word, read_string
+from .swaps import SWAP_TOPIC, SwapEvent, decode_swap
 
 # keccak256('PoolCreated(address,address,uint24,int24,address)')
 POOL_CREATED_TOPIC = '0x783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118'
@@ -94,9 +95,28 @@ class ChainReader:
                 self.timestamps.clear()
         return self.timestamps[block]
 
+    def block_time(self, block: int) -> int:
+        return self._timestamp(block)
+
+    def _log_time(self, log: dict) -> int:
+        # Newer Nitro/geth nodes include blockTimestamp; otherwise read the block header.
+        stamp = log.get('blockTimestamp')
+        if isinstance(stamp, str) and stamp.startswith('0x'):
+            return int(stamp, 16)
+        return self._timestamp(int(log['blockNumber'], 16))
+
     def discover(self, start: int, end: int) -> list[PoolEvent]:
         logs = self.rpc.logs(self.factory, POOL_CREATED_TOPIC, start, end)
-        return [decode_pool_created(log, self._timestamp(int(log['blockNumber'], 16))) for log in logs]
+        return [decode_pool_created(log, self._log_time(log)) for log in logs]
+
+    def swaps(self, pools: list[str], start: int, end: int) -> list[SwapEvent]:
+        """Swap logs for the watched pools in one bounded eth_getLogs request."""
+        if not pools:
+            return []
+        wanted = {p.lower() for p in pools}
+        logs = self.rpc.logs(sorted(wanted), SWAP_TOPIC, start, end)
+        return [decode_swap(log, self._log_time(log)) for log in logs
+                if str(log.get('address', '')).lower() in wanted and not log.get('removed')]
 
     def _safe_uint(self, token: str, selector: str) -> int | None:
         try:

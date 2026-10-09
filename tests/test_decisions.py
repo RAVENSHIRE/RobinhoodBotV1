@@ -3,7 +3,8 @@ from hoodscout.gates import evaluate, RiskLimits
 
 VALID = {'contract_has_code': True, 'owner_renounced': True, 'liquidity_verified': True,
          'eth_usd_verified': True, 'eth_usd_reference': 2500, 'eth_usd_timestamp': 1000,
-         'quote_observed_at': 1000, 'liquidity_usd': 40000, 'volatility_pct': 3, 'price_impact_pct': 1.5}
+         'quote_observed_at': 1000, 'liquidity_usd': 40000, 'volatility_pct': 3, 'price_impact_pct': 1.5,
+         'swap_tracking': True, 'activity_lag_seconds': 2.0, 'unique_buyers': 6, 'top_buyer_share_pct': 22.0}
 BUY = {'action': 'buy', 'confidence': .89, 'risk_score': 3}
 
 def test_normalize_nested_jev():
@@ -26,7 +27,9 @@ def test_default_stub_is_hold():
 def test_gates_approved_only_if_all_true():
     assert evaluate(VALID,BUY,RiskLimits(), now=1000)['approved'] is True
     for key,val in [('contract_has_code',None),('owner_renounced',None),('liquidity_verified',False),
-                    ('liquidity_usd',None),('volatility_pct',None),('volatility_pct',0.1),('price_impact_pct',None),('price_impact_pct',4)]:
+                    ('liquidity_usd',None),('volatility_pct',None),('volatility_pct',0.1),('price_impact_pct',None),('price_impact_pct',4),
+                    ('swap_tracking',False),('activity_lag_seconds',None),('activity_lag_seconds',31),
+                    ('unique_buyers',None),('unique_buyers',2),('top_buyer_share_pct',None),('top_buyer_share_pct',50.1)]:
         assert evaluate({**VALID,key:val},BUY,RiskLimits(), now=1000)['approved'] is False
     assert evaluate(VALID,{**BUY,'confidence':.69},RiskLimits(), now=1000)['approved'] is False
     assert evaluate(VALID,{**BUY,'risk_score':5},RiskLimits(), now=1000)['approved'] is False

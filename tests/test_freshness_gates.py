@@ -7,7 +7,9 @@ STATE = {'contract_has_code': True, 'owner_renounced': True,
          'liquidity_verified': True, 'liquidity_usd': 40000,
          'volatility_pct': 3, 'price_impact_pct': 1,
          'eth_usd_verified': True, 'eth_usd_reference': 2500,
-         'eth_usd_timestamp': 995, 'quote_observed_at': 999}
+         'eth_usd_timestamp': 995, 'quote_observed_at': 999,
+         'swap_tracking': True, 'activity_lag_seconds': 3.0, 'unique_buyers': 4,
+         'top_buyer_share_pct': 35.0}
 BUY = {'action': 'buy', 'confidence': .9, 'risk_score': 2}
 
 
@@ -25,6 +27,13 @@ BUY = {'action': 'buy', 'confidence': .9, 'risk_score': 2}
     ('price_impact_pct', 97.687, 'unacceptable_or_unknown_price_impact'),
     ('price_impact_pct', float('nan'), 'unacceptable_or_unknown_price_impact'),
     ('liquidity_usd', float('inf'), 'insufficient_or_unknown_liquidity'),
+    ('swap_tracking', None, 'missing_or_stale_swap_activity'),
+    ('activity_lag_seconds', float('nan'), 'missing_or_stale_swap_activity'),
+    ('activity_lag_seconds', 45, 'missing_or_stale_swap_activity'),
+    ('unique_buyers', None, 'too_few_or_unknown_unique_buyers'),
+    ('unique_buyers', 1, 'too_few_or_unknown_unique_buyers'),
+    ('top_buyer_share_pct', None, 'concentrated_or_unknown_buyer_share'),
+    ('top_buyer_share_pct', 80, 'concentrated_or_unknown_buyer_share'),
 ])
 def test_buy_cannot_override_missing_or_expired_evidence(field, value, reason):
     assert evaluate(STATE, BUY, RiskLimits(), now=1000)['approved']

@@ -27,6 +27,8 @@ class PaperExecutor:
 
     def buy(self, state: dict) -> dict:
         pool = state['pool_address']
+        if self.store.kill_switch():
+            return {'action': 'skip', 'reason': 'kill_switch'}
         if self.store.has_position(pool):
             return {'action': 'skip', 'reason': 'duplicate_position'}
         current = self.store.open_positions()

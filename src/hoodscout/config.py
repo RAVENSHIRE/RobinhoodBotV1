@@ -61,6 +61,11 @@ class Config:
     price_future_tolerance_seconds: float = 5.0
     quote_max_age_seconds: float = 15.0
     jev_timeout_seconds: float = 10.0
+    jev_call_policy: str = 'prefiltered'
+    min_unique_buyers: int = 3
+    max_top_buyer_share_pct: float = 50.0
+    activity_max_lag_seconds: float = 30.0
+    max_tx_lookups_per_cycle: int = 40
 
 
 def load_config(env_path: str | None = None) -> Config:
@@ -108,6 +113,11 @@ def load_config(env_path: str | None = None) -> Config:
         price_future_tolerance_seconds=float(os.getenv('PRICE_FUTURE_TOLERANCE_SECONDS', '5')),
         quote_max_age_seconds=float(os.getenv('QUOTE_MAX_AGE_SECONDS', '15')),
         jev_timeout_seconds=float(os.getenv('JEV_TIMEOUT_SECONDS', '10')),
+        jev_call_policy=os.getenv('JEV_CALL_POLICY', 'prefiltered').lower(),
+        min_unique_buyers=int(os.getenv('MIN_UNIQUE_BUYERS', '3')),
+        max_top_buyer_share_pct=float(os.getenv('MAX_TOP_BUYER_SHARE_PCT', '50')),
+        activity_max_lag_seconds=float(os.getenv('ACTIVITY_MAX_LAG_SECONDS', '30')),
+        max_tx_lookups_per_cycle=int(os.getenv('MAX_TX_LOOKUPS_PER_CYCLE', '40')),
     )
     if cfg.chain_id != 4663:
         raise ValueError("This project is mainnet Robinhood Chain only: CHAIN_ID must be 4663")
@@ -127,6 +137,13 @@ def load_config(env_path: str | None = None) -> Config:
         raise ValueError('PRICE_FEED_MODE must be coinbase_kraken or off')
     if cfg.decision_provider not in ('stub', 'jev'):
         raise ValueError('DECISION_PROVIDER must be stub or jev')
+    if cfg.jev_call_policy not in ('prefiltered', 'all'):
+        raise ValueError('JEV_CALL_POLICY must be prefiltered or all')
+    if cfg.min_unique_buyers < 0 or cfg.max_tx_lookups_per_cycle < 0:
+        raise ValueError('MIN_UNIQUE_BUYERS and MAX_TX_LOOKUPS_PER_CYCLE must not be negative')
+    if (not math.isfinite(cfg.max_top_buyer_share_pct) or not 0 < cfg.max_top_buyer_share_pct <= 100
+            or not math.isfinite(cfg.activity_max_lag_seconds) or cfg.activity_max_lag_seconds <= 0):
+        raise ValueError('Invalid buyer concentration or activity lag limit')
     if not math.isfinite(cfg.jev_timeout_seconds) or not 0 < cfg.jev_timeout_seconds <= 120:
         raise ValueError('JEV_TIMEOUT_SECONDS must be finite and in (0, 120]')
     for value in (cfg.price_refresh_seconds, cfg.price_max_age_seconds,
