@@ -1,0 +1,38 @@
+JEV AUTHENTICATION DIAGNOSIS - EXISTING .ENV, NO KEY PROMPT
+
+Extract All from hoodscout-jev-diagnostic.zip. Double-click Diagnose-JEV.cmd.
+Keep diagnose_jev.py next to the CMD file. You do not need to paste your key.
+Default project: %USERPROFILE%\Desktop\dev\hoodscout-robinhood
+If your project is elsewhere, drag its folder onto Diagnose-JEV.cmd.
+
+The check uses your existing virtual environment and explicitly reads that
+project's .env. It changes no project files and does not start or stop servers.
+It reports duplicate keys, UTF-8 BOMs, accidental Bearer prefixes, whitespace /
+control characters, dotenv expansion and conflicting inherited key values.
+It does not print keys, prefixes, lengths, fingerprints or raw response bodies.
+
+If local checks pass, it calls the official GET /v1/models endpoint followed by
+one minimal POST /v1/systemone inference. The inference can consume credits.
+It uses the same official Bearer scheme and jev-latest model; it does not guess
+other authentication headers, follow redirects or retry failed requests.
+It prints HTTP statuses, a UTC timestamp, an optional TypeSafe request ID and
+allowlisted words mentioned in the service error. Those words are hints, not
+a proven cause. No secrets are written to a report file.
+
+Interpretation:
+- local_format_issue: correct only the listed issue in VS Code and rerun.
+- minimal_systemone.valid_inference_response=true: basic authenticated inference
+  works. Run Connect-JEV-and-Start-HoodScout.cmd and press Enter to verify the
+  full HoodScout request with the existing key before enabling the provider.
+- HTTP 401 even for minimal_systemone: this minimal request is also rejected;
+  provide TypeSafe support the UTC timestamp and request ID (if present), never
+  the key. Only the provider can explain its authentication decision. A models
+  endpoint success alone does not prove access to System One inference.
+- HTTP 403 / network_error: the account, endpoint access or network may block
+  the request; this is not proof of a bad key.
+
+Reference checked: https://docs.typesafe.ai/introduction/quickstart
+Official SDK transport and model-list route: typesafe-sdk 0.7.4
+
+This is a diagnostic, not a claim that HTTP 401 has been fixed. Python checks
+are tested in the cloud; actual authenticated requests must run on your PC.
