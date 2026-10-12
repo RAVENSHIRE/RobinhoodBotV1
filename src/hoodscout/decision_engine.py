@@ -42,7 +42,7 @@ QUESTIONS = {
 
 ERROR_MESSAGES = {
     'stub': 'HOLD stub selected; JEV is disabled.',
-    'missing_key': 'No TYPESAFE_API_KEY configured. Run hoodscout jev-setup locally.',
+    'missing_key': 'No TYPESAFE_API_KEY in .env. Put your key after TYPESAFE_API_KEY= in .env and run hoodscout jev-setup.',
     'not_checked': 'JEV configured; no successful request in this process yet.',
     'invalid_endpoint': 'JEV_ENDPOINT must be https://api.typesafe.ai/v1/systemone without query, credentials or fragment.',
     'authentication_failed': 'JEV rejected the API key (HTTP 401). Check the key in your TypeSafe account.',
@@ -56,7 +56,7 @@ ERROR_MESSAGES = {
     'invalid_model_response': 'JEV returned an unexpected or invalid response. Entries remain blocked.',
     'invalid_request': 'The observation could not be encoded as valid JSON.',
     'ready': 'A JEV response was received and validated.',
-    'not_recently_checked': 'The last JEV check is older than five minutes; a new call will recheck it.',
+    'not_recently_checked': 'JEV answered successfully earlier and is idle: it is only asked when a pool passes every other gate.',
 }
 
 

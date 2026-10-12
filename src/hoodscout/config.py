@@ -1,11 +1,69 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import io
 from pathlib import Path
 import os
 import math
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# TYPESAFE_API_KEY is the documented name; the others are accepted spellings.
+API_KEY_NAMES = ('TYPESAFE_API_KEY', 'JEV_API_KEY', 'TYPESAFE_KEY', 'JEV_KEY')
+PLACEHOLDER_KEYS = {'your_secret_key', 'your_api_key', 'your-api-key', 'your_key_here',
+                    'paste_your_key_here', 'changeme', '...', '<key>', '<your key>'}
+
+
+def find_env_file(env_path: str | Path | None = None) -> Path:
+    """Explicit path, else the project folder in use (cwd), else the installed project."""
+    if env_path is not None:
+        return Path(env_path)
+    for candidate in (Path.cwd() / '.env', PROJECT_ROOT / '.env'):
+        if candidate.is_file():
+            return candidate
+    return Path.cwd() / '.env'
+
+
+def decode_env_bytes(raw: bytes) -> tuple[str, str]:
+    """Decode .env files saved by Notepad, VS Code or PowerShell (UTF-8, BOM, UTF-16)."""
+    if raw.startswith((b'\xff\xfe', b'\xfe\xff')):
+        return raw.decode('utf-16'), 'utf-16'
+    if raw.startswith(b'\xef\xbb\xbf'):
+        return raw[3:].decode('utf-8'), 'utf-8-bom'
+    try:
+        return raw.decode('utf-8'), 'utf-8'
+    except UnicodeDecodeError:
+        return raw.decode('cp1252', errors='replace'), 'cp1252'
+
+
+def read_env_file(path: Path) -> tuple[dict[str, str | None], str | None, str]:
+    """Return (values, encoding, text) without modifying os.environ."""
+    if not path.is_file():
+        return {}, None, ''
+    text, encoding = decode_env_bytes(path.read_bytes())
+    text = text.replace('\r\n', '\n')
+    return dict(dotenv_values(stream=io.StringIO(text), interpolate=False)), encoding, text
+
+
+def clean_api_key(value: str | None) -> str | None:
+    """Remove copy/paste artifacts: whitespace, surrounding quotes and a Bearer prefix."""
+    if value is None:
+        return None
+    key = value.strip().strip('"\'').strip()
+    if key.lower().startswith('bearer '):
+        key = key[7:].strip()
+    if not key or key.lower() in PLACEHOLDER_KEYS:
+        return None
+    return key
+
+
+def api_key_from_values(values: dict) -> tuple[str | None, str | None]:
+    for name in API_KEY_NAMES:
+        key = clean_api_key(values.get(name))
+        if key:
+            return key, name
+    return None, None
 
 
 def boolean(name: str, default: bool = False) -> bool:
@@ -69,7 +127,13 @@ class Config:
 
 
 def load_config(env_path: str | None = None) -> Config:
-    load_dotenv(env_path, override=False)
+    values, _, _ = read_env_file(find_env_file(env_path))
+    for name, value in values.items():
+        # Settings already in the process environment (e.g. set by a launcher) win...
+        if value is not None and name not in os.environ:
+            os.environ[name] = value
+    # ...except the API key: the project .env is the single source of truth for it.
+    env_key, _ = api_key_from_values(values)
     cfg = Config(
         rpc_url=os.getenv("RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
         chain_id=int(os.getenv("CHAIN_ID", "4663")),
@@ -100,7 +164,7 @@ def load_config(env_path: str | None = None) -> Config:
         paper_fee_bps=float(os.getenv("PAPER_FEE_BPS", "100")),
         live_mode=boolean("LIVE_MODE", False),
         decision_provider=os.getenv("DECISION_PROVIDER", "stub").lower(),
-        typesafe_api_key=os.getenv("TYPESAFE_API_KEY") or None,
+        typesafe_api_key=env_key or api_key_from_values(dict(os.environ))[0],
         jev_endpoint=os.getenv("JEV_ENDPOINT", "https://api.typesafe.ai/v1/systemone"),
         jev_model=os.getenv("JEV_MODEL", "jev-latest"),
         data_dir=Path(os.getenv("DATA_DIR", "./data")),
