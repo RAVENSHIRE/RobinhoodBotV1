@@ -13,7 +13,7 @@ import tempfile
 import httpx
 from dotenv import set_key
 
-from .config import Config, api_key_from_env_text, clean_api_key, read_env_file
+from .config import Config, JEV_ROUTES, read_env_file, resolve_jev_route
 from .decision_engine import DecisionEngine
 
 MODELS_URL = 'https://api.typesafe.ai/v1/models'
@@ -22,14 +22,15 @@ MISSING_KEY = 3
 
 def engine_from_config(cfg: Config) -> DecisionEngine:
     return DecisionEngine('jev', cfg.typesafe_api_key, cfg.jev_endpoint,
-                          cfg.jev_model, timeout=cfg.jev_timeout_seconds)
+                          cfg.jev_model, timeout=cfg.jev_timeout_seconds, route=cfg.jev_route)
 
 
-def inspect_env_key(path: Path) -> tuple[dict, str | None]:
-    """Find the key in .env and describe its format without revealing any of it."""
+def inspect_env_key(path: Path, route_setting: str = 'auto', environ=None) -> tuple[dict, dict]:
+    """Pick the route and key and describe the key's format without revealing any of it."""
     values, encoding, text = read_env_file(path)
-    key, name, entries = api_key_from_env_text(text)
-    raw = values.get(name) if name else None
+    info = resolve_jev_route(route_setting, text, os.environ if environ is None else environ)
+    key, name, entries = info['key'], info['key_variable'], info['key_lines']
+    raw = values.get(name) if name and info['key_source'] == '.env' else None
     issues = []
     if raw is not None and raw.strip() and raw.strip() != key:
         issues.append('quotes_spaces_or_bearer_prefix_removed')
@@ -39,9 +40,10 @@ def inspect_env_key(path: Path) -> tuple[dict, str | None]:
         issues.append('several_key_lines_last_filled_one_used')
     if encoding in ('utf-16', 'utf-8-bom', 'cp1252'):
         issues.append(f'env_file_encoding_{encoding}_converted_on_save')
-    return {'env_file': str(path), 'env_file_found': path.is_file(), 'key_found': bool(key),
-            'key_variable': name, 'key_length': len(key) if key else 0,
-            'notes': issues}, key
+    return {'route': info['route'], 'service': info['service'], 'endpoint': info['endpoint'],
+            'env_file': str(path), 'env_file_found': path.is_file(), 'key_found': bool(key),
+            'key_variable': name, 'key_source': info['key_source'], 'key_length': len(key) if key else 0,
+            'notes': issues}, info
 
 
 def probe_models(key: str, client_factory=httpx.Client) -> int | str:
@@ -55,7 +57,20 @@ def probe_models(key: str, client_factory=httpx.Client) -> int | str:
         return 'network_error'
 
 
-def explain(status: str, models_status) -> str:
+def explain(status: str, models_status, route: str = 'typesafe') -> str:
+    if route == 'vercel':
+        return {
+            'authentication_failed': 'Vercel AI Gateway rejected this key (HTTP 401). In the Vercel dashboard open '
+                'AI Gateway > API Keys, create a key, put it after VERCEL_TYPESAFE_API_KEY= in .env, save, and run this again.',
+            'payment_required': 'Vercel AI Gateway needs billing or credits for this request (HTTP 402). '
+                'Check AI Gateway billing for your Vercel team.',
+            'access_denied': 'Vercel denied access (HTTP 403). Check that AI Gateway and the Jev model are available '
+                'to your Vercel team; Vercel may require a payment method on file.',
+            'request_rejected': 'Vercel rejected the request or model name (HTTP 400/404/422). '
+                'The model is set by VERCEL_JEV_MODEL (default typesafe-ai/jev).',
+            'network_error': 'ai-gateway.vercel.sh could not be reached. Check the internet connection, VPN, proxy or firewall.',
+            'timeout': 'ai-gateway.vercel.sh did not answer in time. Try again or raise JEV_TIMEOUT_SECONDS.',
+        }.get(status, 'JEV did not return a valid answer. See status above.')
     if status == 'authentication_failed':
         if models_status == 200:
             return ('TypeSafe accepts this key for listing models but rejected the JEV request (401). '
@@ -77,14 +92,14 @@ def check_jev(cfg: Config, client_factory=httpx.Client) -> int:
         engine.client_factory = client_factory
     result = engine.check_connection()
     status = result['model_status']['status']
-    if not result['model_status']['connected'] and cfg.typesafe_api_key and status in (
-            'authentication_failed', 'access_denied'):
+    if (cfg.jev_route == 'typesafe' and not result['model_status']['connected']
+            and cfg.typesafe_api_key and status in ('authentication_failed', 'access_denied')):
         result['models_endpoint_http_status'] = probe_models(cfg.typesafe_api_key, client_factory)
     print(json.dumps(result, indent=2))
     if result['model_status']['connected']:
         print('JEV OK: a real JEV answer was received and validated.')
         return 0
-    print('JEV NOT CONNECTED: ' + explain(status, result.get('models_endpoint_http_status')))
+    print('JEV NOT CONNECTED: ' + explain(status, result.get('models_endpoint_http_status'), cfg.jev_route))
     return 1
 
 
@@ -104,20 +119,25 @@ def _atomic_write(path: Path, text: str, updates: dict[str, str] | None = None):
         temporary.unlink(missing_ok=True)
 
 
-def save_settings(path: Path, cfg: Config):
-    """Enable JEV in .env, preserving other entries; converts UTF-16/BOM files to UTF-8."""
+def save_settings(path: Path, cfg: Config, key_variable: str | None = None):
+    """Enable JEV and pin its route in .env, preserving other entries (UTF-16/BOM become UTF-8).
+
+    The key is rewritten (cleaned of quotes or a Bearer prefix) only under ``key_variable``.
+    """
     _, _, text = read_env_file(path)
-    _atomic_write(path, text, {'TYPESAFE_API_KEY': cfg.typesafe_api_key, 'DECISION_PROVIDER': 'jev',
-                               'JEV_ENDPOINT': cfg.jev_endpoint, 'JEV_MODEL': cfg.jev_model})
+    updates = {'DECISION_PROVIDER': 'jev', 'JEV_ROUTE': cfg.jev_route}
+    if key_variable:
+        updates[key_variable] = cfg.typesafe_api_key
+    _atomic_write(path, text, updates)
 
 
-def add_key_placeholder(path: Path):
+def add_key_placeholder(path: Path, variable: str):
     _, _, text = read_env_file(path)
-    if any(line.strip().startswith('TYPESAFE_API_KEY') for line in text.splitlines()):
+    if any(line.strip().startswith(variable) for line in text.splitlines()):
         return
     if text and not text.endswith('\n'):
         text += '\n'
-    _atomic_write(path, text + 'TYPESAFE_API_KEY=\n')
+    _atomic_write(path, text + f'{variable}=\n')
 
 
 def open_in_editor(path: Path) -> bool:
@@ -134,26 +154,32 @@ def setup_jev(cfg: Config, env_path: Path = Path('.env'), editor=open_in_editor,
         print('Run jev-setup from your HoodScout project folder.')
         return 1
     print('JEV setup for PAPER decisions. No transactions will be sent.')
-    report, key = inspect_env_key(env_path)
-    if not key:
-        add_key_placeholder(env_path)
-        print(f'No TypeSafe API key found in {env_path.resolve()}.')
-        print('Paste your key directly after TYPESAFE_API_KEY= (no spaces or quotes), save the file and close the editor.')
+    report, info = inspect_env_key(env_path, cfg.jev_route_setting)
+    if not info['key']:
+        variable = JEV_ROUTES[info['route']]['keys'][0]
+        add_key_placeholder(env_path, variable)
+        print(f"No {info['service']} key found in {env_path.resolve()}.")
+        print(f'Paste your key directly after {variable}= (no spaces or quotes), save the file and close the editor.')
         if editor(env_path):
-            report, key = inspect_env_key(env_path)
-    if not key:
-        print('Still no key in .env. Open .env in VS Code, put your key after TYPESAFE_API_KEY=, save, and run this again.')
+            report, info = inspect_env_key(env_path, cfg.jev_route_setting)
+    if not info['key']:
+        variable = JEV_ROUTES[info['route']]['keys'][0]
+        print(f'Still no key. Open .env in VS Code, put your key after {variable}=, save, and run this again.')
         return MISSING_KEY
     print('Key source: ' + json.dumps(report))
-    print('Sending one small synthetic JEV request (may use a few TypeSafe credits)...')
-    updated = replace(cfg, typesafe_api_key=clean_api_key(key), decision_provider='jev')
+    print(f"Sending one small synthetic JEV request via {info['service']} (may use a little credit)...")
+    model = cfg.jev_model if cfg.jev_route == info['route'] else info['model']
+    updated = replace(cfg, typesafe_api_key=info['key'], decision_provider='jev', jev_route=info['route'],
+                      jev_endpoint=info['endpoint'], jev_model=model)
     if check_jev(updated, client_factory):
         print('.env was not changed.')
         return 1
+    canonical = JEV_ROUTES[info['route']]['keys'][0]
+    rewrite = canonical if info['key_source'] == '.env' and info['key_variable'] == canonical else None
     try:
-        save_settings(env_path, updated)
+        save_settings(env_path, updated, rewrite)
     except OSError:
         print('JEV works, but .env could not be updated. Set DECISION_PROVIDER=jev in .env yourself.')
         return 1
-    print('JEV enabled in .env (DECISION_PROVIDER=jev). Start or restart HoodScout to use it.')
+    print(f"JEV enabled in .env (DECISION_PROVIDER=jev, JEV_ROUTE={info['route']}). Start or restart HoodScout to use it.")
     return 0

@@ -133,3 +133,13 @@ def test_raw_audit_payload_redacts_secrets():
     _,raw=engine.decide({})
     assert 'not-a-real-key' not in json.dumps(raw)
     assert raw['authorization']=='[REDACTED]'
+
+
+def test_a_key_is_never_sent_to_the_other_routes_endpoint():
+    calls = []
+    engine = make_engine(lambda request: calls.append(request) or httpx.Response(200, json=valid_response()))
+    engine.endpoint = 'https://ai-gateway.vercel.sh/typesafe/v1/systemone'
+    assert engine.decide({})[0]['error'] == 'invalid_endpoint' and not calls
+    engine.route = 'vercel'
+    assert engine.decide({})[0]['action'] == 'hold' and len(calls) == 1
+    assert engine.status()['service'] == 'Vercel AI Gateway' and engine.status()['connected']

@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from .config import JEV_ROUTES
+
 RISK_CRITERIA = [
     'Lowest observed risk: strong executable liquidity and complete fresh evidence.',
     'Very low observed risk with only minor supported concerns.',
@@ -42,17 +44,17 @@ QUESTIONS = {
 
 ERROR_MESSAGES = {
     'stub': 'HOLD stub selected; JEV is disabled.',
-    'missing_key': 'No TYPESAFE_API_KEY in .env. Put your key after TYPESAFE_API_KEY= in .env and run hoodscout jev-setup.',
+    'missing_key': 'No JEV key in .env. Put it after VERCEL_TYPESAFE_API_KEY= (Vercel) or TYPESAFE_API_KEY= (TypeSafe) and run hoodscout jev-setup.',
     'not_checked': 'JEV configured; no successful request in this process yet.',
-    'invalid_endpoint': 'JEV_ENDPOINT must be https://api.typesafe.ai/v1/systemone without query, credentials or fragment.',
-    'authentication_failed': 'JEV rejected the API key (HTTP 401). Check the key in your TypeSafe account.',
-    'access_denied': 'JEV access denied (HTTP 403). Check account/API access or network policy.',
+    'invalid_endpoint': 'The JEV endpoint does not match the selected route; the key was not sent.',
+    'authentication_failed': '{service} rejected the API key (HTTP 401). Check or recreate the key.',
+    'access_denied': '{service} denied access (HTTP 403). Check that JEV is enabled for the account/team.',
     'request_rejected': 'JEV rejected the request/model (HTTP 400/404/422). Check JEV_MODEL and the API contract.',
-    'payment_required': 'JEV requires account credits or billing (HTTP 402).',
+    'payment_required': '{service} requires credits or billing (HTTP 402).',
     'rate_limited': 'JEV rate limit reached (HTTP 429). Entries remain blocked for this response.',
     'http_error': 'JEV returned an unsuccessful HTTP response.',
     'timeout': 'JEV timed out. This response cannot authorize an entry.',
-    'network_error': 'JEV is unreachable. Check the network/proxy and api.typesafe.ai access.',
+    'network_error': '{service} is unreachable. Check the network, VPN, proxy or firewall.',
     'invalid_model_response': 'JEV returned an unexpected or invalid response. Entries remain blocked.',
     'invalid_request': 'The observation could not be encoded as valid JSON.',
     'ready': 'A JEV response was received and validated.',
@@ -93,11 +95,11 @@ def normalize_decision(raw: dict[str, Any]) -> dict[str, Any]:
 class DecisionEngine:
     def __init__(self, provider='stub', api_key=None,
                  endpoint='https://api.typesafe.ai/v1/systemone', model='jev-latest',
-                 timeout=10.0, client_factory=httpx.Client, clock=time.time):
+                 timeout=10.0, client_factory=httpx.Client, clock=time.time, route='typesafe'):
         self.provider = provider
         self.api_key = api_key.strip() if api_key else None
         self.endpoint, self.model, self.timeout = endpoint, model, timeout
-        self.client_factory, self.clock = client_factory, clock
+        self.client_factory, self.clock, self.route = client_factory, clock, route
         initial = 'stub' if provider != 'jev' else ('not_checked' if self.api_key else 'missing_key')
         self._health = {'status': initial, 'last_checked_at': None, 'last_success_at': None,
                         'http_status': None, 'latency_ms': None, 'response_model': None}
@@ -109,7 +111,8 @@ class DecisionEngine:
             result['status'] = 'not_recently_checked'
         result.update(provider=self.provider, configured=self.provider == 'jev' and bool(self.api_key),
                       connected=result['status'] == 'ready', model=self.model)
-        result['message'] = ERROR_MESSAGES[result['status']]
+        result.update(route=self.route, service=JEV_ROUTES.get(self.route, {}).get('service', 'JEV'))
+        result['message'] = ERROR_MESSAGES[result['status']].format(service=result['service'])
         return result
 
     def _finish(self, status, started, http_status=None, model=None):
@@ -135,7 +138,7 @@ class DecisionEngine:
             self._health = {**self._health, 'status': error}
             return hold(error), {'provider': self.provider, 'error': error}
         started = self.clock()
-        if self.endpoint != 'https://api.typesafe.ai/v1/systemone':
+        if self.route not in JEV_ROUTES or self.endpoint != JEV_ROUTES[self.route]['endpoint']:
             self._finish('invalid_endpoint', started)
             return hold('invalid_endpoint'), {'error': 'invalid_endpoint'}
         status_code = None

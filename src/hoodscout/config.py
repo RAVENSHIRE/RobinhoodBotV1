@@ -12,6 +12,15 @@ from dotenv.parser import parse_stream
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # TYPESAFE_API_KEY is the documented name; the others are accepted spellings.
 API_KEY_NAMES = ('TYPESAFE_API_KEY', 'JEV_API_KEY', 'TYPESAFE_KEY', 'JEV_KEY')
+# Vercel AI Gateway key for its TypeSafe-compatible JEV route.
+VERCEL_KEY_NAMES = ('VERCEL_TYPESAFE_API_KEY', 'AI_GATEWAY_API_KEY', 'VERCEL_AI_GATEWAY_API_KEY')
+# The only destinations a key is ever sent to, one per route.
+JEV_ROUTES = {
+    'typesafe': {'endpoint': 'https://api.typesafe.ai/v1/systemone', 'model': 'jev-latest',
+                 'keys': API_KEY_NAMES, 'service': 'TypeSafe'},
+    'vercel': {'endpoint': 'https://ai-gateway.vercel.sh/typesafe/v1/systemone', 'model': 'typesafe-ai/jev',
+               'keys': VERCEL_KEY_NAMES, 'service': 'Vercel AI Gateway'},
+}
 PLACEHOLDER_KEYS = {'your_secret_key', 'your_api_key', 'your-api-key', 'your_key_here',
                     'paste_your_key_here', 'changeme', '...', '<key>', '<your key>'}
 
@@ -59,18 +68,18 @@ def clean_api_key(value: str | None) -> str | None:
     return key
 
 
-def api_key_from_values(values: dict) -> tuple[str | None, str | None]:
-    for name in API_KEY_NAMES:
+def api_key_from_values(values: dict, names=API_KEY_NAMES) -> tuple[str | None, str | None]:
+    for name in names:
         key = clean_api_key(values.get(name))
         if key:
             return key, name
     return None, None
 
 
-def api_key_from_env_text(text: str) -> tuple[str | None, str | None, int]:
+def api_key_from_env_text(text: str, names=API_KEY_NAMES) -> tuple[str | None, str | None, int]:
     """(key, variable, number of key lines). With several lines the last filled-in one wins."""
-    bindings = [b for b in parse_stream(io.StringIO(text)) if b.key in API_KEY_NAMES]
-    for name in API_KEY_NAMES:
+    bindings = [b for b in parse_stream(io.StringIO(text)) if b.key in names]
+    for name in names:
         filled = [k for k in (clean_api_key(b.value) for b in bindings if b.key == name) if k]
         if filled:
             return filled[-1], name, len(bindings)
@@ -131,10 +140,33 @@ class Config:
     quote_max_age_seconds: float = 15.0
     jev_timeout_seconds: float = 10.0
     jev_call_policy: str = 'prefiltered'
+    jev_route: str = 'typesafe'
+    jev_route_setting: str = 'auto'
     min_unique_buyers: int = 3
     max_top_buyer_share_pct: float = 50.0
     activity_max_lag_seconds: float = 30.0
     max_tx_lookups_per_cycle: int = 40
+
+
+def resolve_jev_route(setting: str, text: str, environ) -> dict:
+    """Pick the JEV route and its key. auto: Vercel when a gateway key exists, else TypeSafe.
+
+    Keys in the project .env win over keys inherited from the process environment.
+    """
+    found = {}
+    for route, spec in JEV_ROUTES.items():
+        key, name, entries = api_key_from_env_text(text, spec['keys'])
+        source = '.env' if key else None
+        if not key:
+            key, name = api_key_from_values(dict(environ), spec['keys'])
+            source = 'environment' if key else None
+        found[route] = {'route': route, 'key': key, 'key_variable': name, 'key_source': source,
+                        'key_lines': entries, **{k: spec[k] for k in ('endpoint', 'model', 'service')}}
+    if setting in JEV_ROUTES:
+        return found[setting]
+    if found['vercel']['key'] or not found['typesafe']['key']:
+        return found['vercel']
+    return found['typesafe']
 
 
 def load_config(env_path: str | None = None) -> Config:
@@ -143,8 +175,9 @@ def load_config(env_path: str | None = None) -> Config:
         # Settings already in the process environment (e.g. set by a launcher) win...
         if value is not None and name not in os.environ:
             os.environ[name] = value
-    # ...except the API key: the project .env is the single source of truth for it.
-    env_key, _, _ = api_key_from_env_text(text)
+    # ...except API keys: the project .env is the source of truth for them.
+    route_setting = os.getenv('JEV_ROUTE', 'auto').strip().lower()
+    route = resolve_jev_route(route_setting, text, os.environ)
     cfg = Config(
         rpc_url=os.getenv("RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
         chain_id=int(os.getenv("CHAIN_ID", "4663")),
@@ -175,9 +208,11 @@ def load_config(env_path: str | None = None) -> Config:
         paper_fee_bps=float(os.getenv("PAPER_FEE_BPS", "100")),
         live_mode=boolean("LIVE_MODE", False),
         decision_provider=os.getenv("DECISION_PROVIDER", "stub").lower(),
-        typesafe_api_key=env_key or api_key_from_values(dict(os.environ))[0],
-        jev_endpoint=os.getenv("JEV_ENDPOINT", "https://api.typesafe.ai/v1/systemone"),
-        jev_model=os.getenv("JEV_MODEL", "jev-latest"),
+        typesafe_api_key=route['key'],
+        # The endpoint always follows the route, so a key only goes to its own service.
+        jev_endpoint=route['endpoint'],
+        jev_model=(os.getenv('VERCEL_JEV_MODEL', route['model']) if route['route'] == 'vercel'
+                   else os.getenv('JEV_MODEL', route['model'])),
         data_dir=Path(os.getenv("DATA_DIR", "./data")),
         host=os.getenv("HOST", "127.0.0.1"),
         port=int(os.getenv("PORT", "8000")),
@@ -189,6 +224,8 @@ def load_config(env_path: str | None = None) -> Config:
         quote_max_age_seconds=float(os.getenv('QUOTE_MAX_AGE_SECONDS', '15')),
         jev_timeout_seconds=float(os.getenv('JEV_TIMEOUT_SECONDS', '10')),
         jev_call_policy=os.getenv('JEV_CALL_POLICY', 'prefiltered').lower(),
+        jev_route=route['route'],
+        jev_route_setting=route_setting,
         min_unique_buyers=int(os.getenv('MIN_UNIQUE_BUYERS', '3')),
         max_top_buyer_share_pct=float(os.getenv('MAX_TOP_BUYER_SHARE_PCT', '50')),
         activity_max_lag_seconds=float(os.getenv('ACTIVITY_MAX_LAG_SECONDS', '30')),
@@ -212,6 +249,8 @@ def load_config(env_path: str | None = None) -> Config:
         raise ValueError('PRICE_FEED_MODE must be coinbase_kraken or off')
     if cfg.decision_provider not in ('stub', 'jev'):
         raise ValueError('DECISION_PROVIDER must be stub or jev')
+    if cfg.jev_route_setting not in ('auto', *JEV_ROUTES):
+        raise ValueError('JEV_ROUTE must be auto, vercel or typesafe')
     if cfg.jev_call_policy not in ('prefiltered', 'all'):
         raise ValueError('JEV_CALL_POLICY must be prefiltered or all')
     if cfg.min_unique_buyers < 0 or cfg.max_tx_lookups_per_cycle < 0:

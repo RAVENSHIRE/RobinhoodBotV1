@@ -30,7 +30,7 @@ class Monitor:
             max_divergence_pct=cfg.price_max_divergence_pct,
             future_tolerance_seconds=cfg.price_future_tolerance_seconds)
         self.engine = DecisionEngine(cfg.decision_provider, cfg.typesafe_api_key, cfg.jev_endpoint,
-                                     cfg.jev_model, timeout=cfg.jev_timeout_seconds)
+                                     cfg.jev_model, timeout=cfg.jev_timeout_seconds, route=cfg.jev_route)
         self.executor = PaperExecutor(store, cfg.paper_order_usd, cfg.paper_slippage_bps,
                                       cfg.paper_fee_bps, cfg.paper_stop_loss_pct, cfg.paper_take_profit_pct,
                                       cfg.paper_max_hold_seconds, cfg.max_open_positions,

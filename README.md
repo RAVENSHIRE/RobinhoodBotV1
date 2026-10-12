@@ -181,6 +181,15 @@ Keep the stub until a decision provider is separately validated. This update doe
 
 ## JEV setup and connection diagnostics
 
+**Two routes to JEV.** `JEV_ROUTE=auto` (default) uses Vercel AI Gateway when a gateway key is configured, otherwise TypeSafe directly:
+
+| Route | Key in `.env` | Endpoint | Model | Billing |
+| --- | --- | --- | --- | --- |
+| `vercel` | `VERCEL_TYPESAFE_API_KEY` (also `AI_GATEWAY_API_KEY`) | `https://ai-gateway.vercel.sh/typesafe/v1/systemone` | `typesafe-ai/jev` (`VERCEL_JEV_MODEL`) | your Vercel AI Gateway account |
+| `typesafe` | `TYPESAFE_API_KEY` | `https://api.typesafe.ai/v1/systemone` | `jev-latest` (`JEV_MODEL`) | TypeSafe credits |
+
+Both use the same TypeSafe System One request and response, per Vercel's [TypeSafe API with AI Gateway](https://vercel.com/docs/ai-gateway/sdks-and-apis/typesafe) docs. The endpoint is derived from the route, so a key is never sent to the other service; `JEV_ENDPOINT` is no longer used. A gateway key set in the Windows environment (`AI_GATEWAY_API_KEY`) is used when `.env` has none. After a successful check, setup writes `JEV_ROUTE` to `.env` so the server uses the same route. Vercel-route errors are explained in Vercel terms (401 key, 402 billing, 403 team access, which Vercel may tie to a payment method on file). The Vercel route was implemented from Vercel's documentation and tested against mocked responses; it has not been called live from the build environment.
+
 Obtain an API key from your own TypeSafe account at https://typesafe.ai. API inference may require account credits. Do not paste keys into chat, GitHub or command-line arguments.
 
 Put the key into the project `.env` as `TYPESAFE_API_KEY=your-key` (VS Code or Notepad; no quotes needed). Then, from the project directory, run `.venv\Scripts\python.exe -m hoodscout.cli jev-setup` on Windows (or `.venv/bin/python -m hoodscout.cli jev-setup` on Linux). Nothing is typed or pasted into the terminal: setup reads the key from `.env`. If it is missing, setup adds an empty `TYPESAFE_API_KEY=` line and, on Windows, opens `.env` in Notepad and continues after Notepad is closed. The `.env` key always wins over an older `TYPESAFE_API_KEY` set in the Windows environment. `.env` files saved as UTF-16 (PowerShell `>`/`Set-Content`) or with a BOM are read correctly; surrounding quotes, spaces and a pasted `Bearer ` prefix are removed; `JEV_API_KEY` is accepted as an alternative name. Setup prints where the key was found and its length, never the key. It then performs one small explicitly synthetic inference with no executor and sets `DECISION_PROVIDER=jev` only after a valid API response (rewriting `.env` as UTF-8, other entries preserved, atomic replacement). Failed checks leave the file unchanged. On HTTP 401/403 it also calls the free `GET /v1/models` endpoint to tell a rejected key (401 there too: create a new key) from a key without JEV access. Restart HoodScout afterward. No wallet key is used.
