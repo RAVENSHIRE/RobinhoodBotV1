@@ -15,8 +15,8 @@ echo This updater preserves .env, data and .venv and backs up changed source fil
 pause
 
 set "HOODSCOUT_UPDATE_WORK=%TEMP%\hoodscout-update-%RANDOM%-%RANDOM%"
-set "HOODSCOUT_UPDATE_URL=https://github.com/RAVENSHIRE/RobinhoodBotV1/raw/7640831d1bf49c92f862237ea8812ebd258e0149/downloads/hoodscout-astra-update.zip"
-set "HOODSCOUT_UPDATE_SHA=2b67f9692cdfcb75094d6283fc51c8ba0416f37898a47edc61071e3074381c98"
+set "HOODSCOUT_UPDATE_URL=https://github.com/RAVENSHIRE/RobinhoodBotV1/raw/0cf7107553060f57869a8431895b01abae7bf6af/downloads/hoodscout-jev-env-update.zip"
+set "HOODSCOUT_UPDATE_SHA=a07c2ba3f1dc1517726d3f817699e45e5857f88d6ce2f0ca646389bb7bafbfd5"
 
 echo Downloading and verifying the tested update...
 powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $work=$env:HOODSCOUT_UPDATE_WORK; New-Item -ItemType Directory -Path $work | Out-Null; $zip=Join-Path $work 'update.zip'; Invoke-WebRequest -UseBasicParsing -Uri $env:HOODSCOUT_UPDATE_URL -OutFile $zip; if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant() -ne $env:HOODSCOUT_UPDATE_SHA) { throw 'Update checksum mismatch; nothing has been installed' }; Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $work 'unpacked')"
@@ -47,9 +47,10 @@ echo Running the regression tests...
 ".\.venv\Scripts\python.exe" -m pytest -q
 if errorlevel 1 goto failed
 
-echo Connecting JEV. Enter your TypeSafe API key at the hidden prompt below.
+echo Connecting JEV with the TypeSafe API key from your project .env file.
+echo Nothing needs to be typed or pasted in this window.
+echo If .env has no key yet, Notepad opens: paste the key after TYPESAFE_API_KEY= then save and close Notepad.
 echo The check and subsequent scanner startup each make a small API inference and may use credits.
-echo Settings are saved to your local .env only after the connection check succeeds.
 ".\.venv\Scripts\python.exe" -m hoodscout.cli jev-setup
 if errorlevel 1 goto failed
 set "DECISION_PROVIDER=jev"

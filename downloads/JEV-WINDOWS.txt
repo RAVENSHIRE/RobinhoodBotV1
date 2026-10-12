@@ -1,30 +1,35 @@
 HOODSCOUT - CONNECT JEV ON WINDOWS
 
 1. Stop the existing HoodScout server with Ctrl+C. Leave VS Code open.
-2. Extract All from this ZIP. Double-click Connect-JEV-and-Start-HoodScout.cmd.
-3. At the hidden prompt, paste your TypeSafe API key and press Enter.
-   The key will not appear as you type. Never send it in chat.
-   If a key is already configured, just press Enter to keep it.
-4. The assistant tests JEV and saves verified settings in your local .env.
-   It then starts the PAPER dashboard and opens the browser. Keep the window open.
+2. Open .env in your project folder (VS Code or Notepad) and make sure it has
+   one line like this, with your real key and no quotes or spaces:
+       TYPESAFE_API_KEY=your-key-here
+   Save the file. Never send the key in chat.
+3. Extract All from this ZIP. Double-click Connect-JEV-and-Start-HoodScout.cmd.
+   You do not type or paste anything in the black window. The key is read
+   from .env. If it is missing, Notepad opens: paste the key after
+   TYPESAFE_API_KEY=, save, close Notepad, and setup continues.
+4. The launcher tests JEV, sets DECISION_PROVIDER=jev in .env, starts the PAPER
+   dashboard and opens the browser. Keep the window open.
 
 Default project: %USERPROFILE%\Desktop\dev\hoodscout-robinhood
 If yours is elsewhere, drag your project folder onto the CMD file.
 
 The launcher downloads a fixed GitHub revision, checks SHA-256, applies the update
-and runs 102 tests first. The updater preserves .env, .venv and data, backs up
+and runs 113 tests first. The updater preserves .env, .venv and data, backs up
 changed source files and stops on local source conflicts. No new Python package
 is required. Your existing .venv must already contain the project dependencies.
 
 The setup check and scanner startup each make one small model inference, which
 may consume TypeSafe credits. Real pool decisions can consume further credits.
-HTTP 401 means the key was rejected; HTTP 402 indicates credits/billing;
+HTTP 401 means the key was rejected (the launcher also checks the free model
+list: 401 there too means create a new key in your TypeSafe account); HTTP 402 indicates credits/billing;
 HTTP 403 indicates account access or a network policy restriction. Errors remain
 visible in the terminal. A failed setup check does not change .env.
 
 JEV OK means a response has been validated in this running server; key presence
 alone does not count. After five minutes without a successful call, the status
-becomes JEV CHECK until another request succeeds. PAPER entry still requires all
+shows JEV IDLE: JEV is only asked when a pool passes every other gate. PAPER entry still requires all
 independent liquidity, current price, quote-age and risk gates. This update does
 not enable live transaction broadcasting.
 
@@ -40,7 +45,7 @@ NEW IN THIS UPDATE
   swap data at most 30 seconds old. Unknown values block entries.
 
 The cloud verified the upgrade from the first published project and from the
-JEV update (also with Windows CRLF files), 102 Python tests and the official TypeSafe
+JEV and swap-activity updates (also with Windows CRLF files), 113 Python tests and the official TypeSafe
 SDK request/response schema. Windows launcher execution and an authenticated JEV
 call must be verified on your Windows machine.
 
