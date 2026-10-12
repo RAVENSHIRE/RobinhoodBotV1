@@ -15,8 +15,8 @@ echo This updater preserves .env, data and .venv and backs up changed source fil
 pause
 
 set "HOODSCOUT_UPDATE_WORK=%TEMP%\hoodscout-update-%RANDOM%-%RANDOM%"
-set "HOODSCOUT_UPDATE_URL=https://github.com/RAVENSHIRE/RobinhoodBotV1/raw/a28dc4766e77f7b392cb26a0e64ba5a028324006/downloads/hoodscout-jev-env-update.zip"
-set "HOODSCOUT_UPDATE_SHA=2ce6f7fbb878058030088fdf6fb4575a25a02fe45a9280934b5eac9fcd88c702"
+set "HOODSCOUT_UPDATE_URL=https://github.com/RAVENSHIRE/RobinhoodBotV1/raw/2749305ad1fb1c97e1d579cdaadd37d6d9424b75/downloads/hoodscout-jev-env-update.zip"
+set "HOODSCOUT_UPDATE_SHA=6bf40bbde3d7bcf28a50ddd9a72f88f5c7b92b9967fe3ca60cef0328edb53332"
 
 echo Downloading and verifying the tested update...
 powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$ErrorActionPreference='Stop'; [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $work=$env:HOODSCOUT_UPDATE_WORK; New-Item -ItemType Directory -Path $work | Out-Null; $zip=Join-Path $work 'update.zip'; Invoke-WebRequest -UseBasicParsing -Uri $env:HOODSCOUT_UPDATE_URL -OutFile $zip; if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant() -ne $env:HOODSCOUT_UPDATE_SHA) { throw 'Update checksum mismatch; nothing has been installed' }; Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $work 'unpacked')"
@@ -47,9 +47,10 @@ echo Running the regression tests...
 ".\.venv\Scripts\python.exe" -m pytest -q
 if errorlevel 1 goto failed
 
-echo Connecting JEV with the TypeSafe API key from your project .env file.
+echo Connecting JEV with the key from your project .env file.
+echo VERCEL_TYPESAFE_API_KEY uses Vercel AI Gateway; otherwise TYPESAFE_API_KEY uses TypeSafe.
 echo Nothing needs to be typed or pasted in this window.
-echo If .env has no key yet, Notepad opens: paste the key after TYPESAFE_API_KEY= then save and close Notepad.
+echo If .env has no key yet, Notepad opens: paste the key after VERCEL_TYPESAFE_API_KEY= then save and close Notepad.
 echo The check and subsequent scanner startup each make a small API inference and may use credits.
 ".\.venv\Scripts\python.exe" -m hoodscout.cli jev-setup
 if errorlevel 1 goto failed

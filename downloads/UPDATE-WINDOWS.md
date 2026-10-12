@@ -1,6 +1,6 @@
 # HoodScout discovery and price-feed update
 
-**Current update (TypeSafe key read from `.env`, plus swap activity, JEV credit prefilter and kill switch):** put your key in the project `.env` as `TYPESAFE_API_KEY=...`, then use `hoodscout-jev-launcher.zip` as described in `JEV-WINDOWS.txt`. Nothing is pasted into the console. Both launchers install the cumulative `hoodscout-jev-env-update.zip` and run 114 tests.
+**Current update (TypeSafe key read from `.env`, plus swap activity, JEV credit prefilter and kill switch):** put your key in the project `.env` as `TYPESAFE_API_KEY=...`, then use `hoodscout-jev-launcher.zip` as described in `JEV-WINDOWS.txt`. Nothing is pasted into the console. Both launchers install the cumulative `hoodscout-jev-env-update.zip` and run 121 tests.
 
 **JEV update:** use `hoodscout-jev-launcher.zip`, extract it and double-click `Connect-JEV-and-Start-HoodScout.cmd`. See `JEV-WINDOWS.txt` for the hidden-key setup and diagnostics. It includes the discovery/price fixes below plus the corrected TypeSafe API contract, connection health and 75 passing tests. The current standard launcher also installs that cumulative update and honors the provider in `.env`. The historical manual instructions below keep the stub selected; use the dedicated JEV launcher when connecting your new API key.
 

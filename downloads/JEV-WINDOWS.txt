@@ -1,14 +1,15 @@
 HOODSCOUT - CONNECT JEV ON WINDOWS
 
 1. Stop the existing HoodScout server with Ctrl+C. Leave VS Code open.
-2. Open .env in your project folder (VS Code or Notepad) and make sure it has
-   one line like this, with your real key and no quotes or spaces:
-       TYPESAFE_API_KEY=your-key-here
-   Save the file. Never send the key in chat.
+2. Open .env in your project folder (VS Code or Notepad) and add ONE of these
+   lines with your real key (no quotes or spaces), then save:
+       VERCEL_TYPESAFE_API_KEY=your-vercel-ai-gateway-key   (Vercel AI Gateway)
+       TYPESAFE_API_KEY=your-typesafe-key                   (TypeSafe directly)
+   If both are present, Vercel is used. Never send a key in chat.
 3. Extract All from this ZIP. Double-click Connect-JEV-and-Start-HoodScout.cmd.
    You do not type or paste anything in the black window. The key is read
    from .env. If it is missing, Notepad opens: paste the key after
-   TYPESAFE_API_KEY=, save, close Notepad, and setup continues.
+   VERCEL_TYPESAFE_API_KEY=, save, close Notepad, and setup continues.
 4. The launcher tests JEV, sets DECISION_PROVIDER=jev in .env, starts the PAPER
    dashboard and opens the browser. Keep the window open.
 
@@ -16,7 +17,7 @@ Default project: %USERPROFILE%\Desktop\dev\hoodscout-robinhood
 If yours is elsewhere, drag your project folder onto the CMD file.
 
 The launcher downloads a fixed GitHub revision, checks SHA-256, applies the update
-and runs 114 tests first. The updater preserves .env, .venv and data, backs up
+and runs 121 tests first. The updater preserves .env, .venv and data, backs up
 changed source files and stops on local source conflicts. No new Python package
 is required. Your existing .venv must already contain the project dependencies.
 
@@ -45,7 +46,7 @@ NEW IN THIS UPDATE
   swap data at most 30 seconds old. Unknown values block entries.
 
 The cloud verified the upgrade from the first published project and from the
-JEV and swap-activity updates (also with Windows CRLF files), 114 Python tests and the official TypeSafe
+JEV and swap-activity updates (also with Windows CRLF files), 121 Python tests and the official TypeSafe
 SDK request/response schema. Windows launcher execution and an authenticated JEV
 call must be verified on your Windows machine.
 
