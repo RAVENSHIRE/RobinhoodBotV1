@@ -16,7 +16,7 @@ Default project: %USERPROFILE%\Desktop\dev\hoodscout-robinhood
 If yours is elsewhere, drag your project folder onto the CMD file.
 
 The launcher downloads a fixed GitHub revision, checks SHA-256, applies the update
-and runs 113 tests first. The updater preserves .env, .venv and data, backs up
+and runs 114 tests first. The updater preserves .env, .venv and data, backs up
 changed source files and stops on local source conflicts. No new Python package
 is required. Your existing .venv must already contain the project dependencies.
 
@@ -45,7 +45,7 @@ NEW IN THIS UPDATE
   swap data at most 30 seconds old. Unknown values block entries.
 
 The cloud verified the upgrade from the first published project and from the
-JEV and swap-activity updates (also with Windows CRLF files), 113 Python tests and the official TypeSafe
+JEV and swap-activity updates (also with Windows CRLF files), 114 Python tests and the official TypeSafe
 SDK request/response schema. Windows launcher execution and an authenticated JEV
 call must be verified on your Windows machine.
 
