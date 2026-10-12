@@ -115,3 +115,11 @@ def test_save_settings_preserves_other_entries_and_quotes(tmp_path):
     assert values['ETH_USD'] == '1234' and values['DATA_DIR'] == './data/paper'
     assert values['TYPESAFE_API_KEY'] == "synthetic'key" and values['DECISION_PROVIDER'] == 'jev'
     assert '# User settings' in path.read_text()
+
+
+def test_several_key_lines_use_the_last_filled_in_one(tmp_path):
+    path = tmp_path / '.env'
+    path.write_text(f'TYPESAFE_API_KEY=old_key_one\nTYPESAFE_API_KEY={KEY}\nTYPESAFE_API_KEY=\n')
+    report, key = inspect_env_key(path)
+    assert key == KEY and report['notes'] == ['several_key_lines_last_filled_one_used']
+    assert load_config().typesafe_api_key == KEY

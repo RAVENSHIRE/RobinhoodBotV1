@@ -13,7 +13,7 @@ import tempfile
 import httpx
 from dotenv import set_key
 
-from .config import Config, API_KEY_NAMES, api_key_from_values, clean_api_key, read_env_file
+from .config import Config, api_key_from_env_text, clean_api_key, read_env_file
 from .decision_engine import DecisionEngine
 
 MODELS_URL = 'https://api.typesafe.ai/v1/models'
@@ -28,17 +28,15 @@ def engine_from_config(cfg: Config) -> DecisionEngine:
 def inspect_env_key(path: Path) -> tuple[dict, str | None]:
     """Find the key in .env and describe its format without revealing any of it."""
     values, encoding, text = read_env_file(path)
-    key, name = api_key_from_values(values)
-    entries = sum(1 for line in text.splitlines()
-                  if line.strip().split('=', 1)[0].removeprefix('export ').strip() in API_KEY_NAMES)
+    key, name, entries = api_key_from_env_text(text)
     raw = values.get(name) if name else None
     issues = []
-    if raw is not None and raw.strip() != key:
+    if raw is not None and raw.strip() and raw.strip() != key:
         issues.append('quotes_spaces_or_bearer_prefix_removed')
     if key and (not key.isascii() or not key.isprintable() or ' ' in key):
         issues.append('key_contains_spaces_or_non_ascii_characters')
     if entries > 1:
-        issues.append('multiple_key_lines_first_valid_one_used')
+        issues.append('several_key_lines_last_filled_one_used')
     if encoding in ('utf-16', 'utf-8-bom', 'cp1252'):
         issues.append(f'env_file_encoding_{encoding}_converted_on_save')
     return {'env_file': str(path), 'env_file_found': path.is_file(), 'key_found': bool(key),

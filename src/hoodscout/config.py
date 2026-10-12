@@ -7,6 +7,7 @@ import os
 import math
 
 from dotenv import dotenv_values
+from dotenv.parser import parse_stream
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # TYPESAFE_API_KEY is the documented name; the others are accepted spellings.
@@ -64,6 +65,16 @@ def api_key_from_values(values: dict) -> tuple[str | None, str | None]:
         if key:
             return key, name
     return None, None
+
+
+def api_key_from_env_text(text: str) -> tuple[str | None, str | None, int]:
+    """(key, variable, number of key lines). With several lines the last filled-in one wins."""
+    bindings = [b for b in parse_stream(io.StringIO(text)) if b.key in API_KEY_NAMES]
+    for name in API_KEY_NAMES:
+        filled = [k for k in (clean_api_key(b.value) for b in bindings if b.key == name) if k]
+        if filled:
+            return filled[-1], name, len(bindings)
+    return None, None, len(bindings)
 
 
 def boolean(name: str, default: bool = False) -> bool:
@@ -127,13 +138,13 @@ class Config:
 
 
 def load_config(env_path: str | None = None) -> Config:
-    values, _, _ = read_env_file(find_env_file(env_path))
+    values, _, text = read_env_file(find_env_file(env_path))
     for name, value in values.items():
         # Settings already in the process environment (e.g. set by a launcher) win...
         if value is not None and name not in os.environ:
             os.environ[name] = value
     # ...except the API key: the project .env is the single source of truth for it.
-    env_key, _ = api_key_from_values(values)
+    env_key, _, _ = api_key_from_env_text(text)
     cfg = Config(
         rpc_url=os.getenv("RPC_URL", "https://rpc.mainnet.chain.robinhood.com"),
         chain_id=int(os.getenv("CHAIN_ID", "4663")),
