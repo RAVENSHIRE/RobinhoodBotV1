@@ -1,9 +1,11 @@
 """Uniswap V3 QuoterV2 read-only price impact check (WETH -> token)."""
 from __future__ import annotations
 from decimal import Decimal
+import math
 import time
 from .rpc import RPC, RpcError, read_word, address_word
 from .chain import v3_token1_per_token0, PoolEvent
+from .gates import finite
 
 # quoteExactInputSingle((address,address,uint256,uint24,uint160))
 QUOTER_EXACT_INPUT_SINGLE = '0xc6a5026a'
@@ -50,3 +52,30 @@ def quote_buy(rpc: RPC, quoter: str, event: PoolEvent, weth: str,
         'quote_observed_at': quote_observed_at,
         'initialized_ticks_crossed': ticks_crossed, 'quote_gas_estimate': gas_estimate,
     }
+
+
+def quote_sell(rpc: RPC, quoter: str, event: PoolEvent, weth: str,
+               eth_usd: float, units: float, token_decimals: int) -> dict:
+    """Quote the held quantity back into WETH; this does not prove ERC20 transferability."""
+    if (not isinstance(token_decimals, int) or isinstance(token_decimals, bool)
+            or not 0 <= token_decimals <= 36 or not finite(units) or units <= 0
+            or not finite(eth_usd) or eth_usd <= 0):
+        raise ValueError('Invalid sell quantity, decimals or USD reference')
+    if weth.lower() not in (event.token0.lower(), event.token1.lower()):
+        raise ValueError('Only WETH pairs supported')
+    token = event.token1 if event.token0.lower() == weth.lower() else event.token0
+    amount_in = int(Decimal(str(units)) * (Decimal(10) ** token_decimals))
+    if not 0 < amount_in < 2**256:
+        raise ValueError('Invalid raw sell amount')
+    observed_at = time.time()
+    output = rpc.eth_call(quoter, encode_quote_exact_input_single(token, weth, amount_in, event.fee))
+    amount_out, sqrt_after = read_word(output, 0), read_word(output, 1)
+    gas_estimate = read_word(output, 3)
+    if amount_out <= 0 or sqrt_after <= 0:
+        raise ValueError('Quoter produced no WETH')
+    proceeds = Decimal(amount_out) / Decimal(10**18) * Decimal(str(eth_usd))
+    if not math.isfinite(float(proceeds)) or proceeds <= 0:
+        raise ValueError('Invalid quoted proceeds')
+    return {'pool_address': event.address.lower(), 'token_address': token.lower(),
+            'units': units, 'amount_in_raw': str(amount_in), 'amount_out_wei': str(amount_out),
+            'proceeds_usd': float(proceeds), 'observed_at': observed_at, 'gas_estimate': gas_estimate}

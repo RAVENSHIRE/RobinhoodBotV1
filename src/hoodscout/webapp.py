@@ -77,6 +77,7 @@ def create_app(cfg: Config, start_scanner: bool = True) -> FastAPI:
             'quoter_configured': bool(cfg.quoter),
             'kill_switch': store.kill_switch(),
             'jev_call_policy': cfg.jev_call_policy,
+            'model_call_policy': 'prefiltered' if cfg.decision_provider == 'gemini' else cfg.jev_call_policy,
             'swap_tracking': {'synced_block': store.get_meta('swap_synced_block'),
                               'synced_at': float(synced_at) if synced_at else None},
             'metrics': stats,

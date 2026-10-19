@@ -29,7 +29,10 @@ def test_store_and_paper(tmp_path):
     assert ex.buy(state)['action']=='buy'
     assert ex.buy(state)['action']=='skip'
     assert len(store.open_positions())==1
-    outcome=ex.mark({**state,'price_usd':5.},now=2000)
+    p=store.open_positions()[0]
+    outcome=ex.mark({**state,'price_usd':5., 'eth_usd_verified':True, 'eth_usd_timestamp':2000,
+        'exit_quotes':{str(p['id']):{'pool_address':POOL, 'token_address':TOKEN,
+            'units':p['units'], 'proceeds_usd':p['units']*5, 'observed_at':2000}}},now=2000)
     assert outcome and outcome[0]['reason']=='TAKE_PROFIT'
     assert store.stats()['positions']==1 and store.stats()['closed_positions']==1
 

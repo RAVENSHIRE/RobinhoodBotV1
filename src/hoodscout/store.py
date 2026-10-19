@@ -65,6 +65,19 @@ class Store:
         with self.lock, self._connect() as db:
             db.execute('DELETE FROM metadata WHERE key=?', (key,))
 
+    def reserve_model_call(self, provider: str, day: str, limit: int) -> bool:
+        """Count attempts before sending, atomically across processes and restarts."""
+        key = f'model_calls:{provider}:{day}'
+        with self.lock, self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT value FROM metadata WHERE key=?', (key,)).fetchone()
+            count = int(row[0]) if row else 0
+            if count >= limit:
+                return False
+            db.execute('INSERT INTO metadata VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                       (key, str(count + 1)))
+            return True
+
     def kill_switch(self) -> bool:
         return self.get_meta('kill_switch') == '1'
 

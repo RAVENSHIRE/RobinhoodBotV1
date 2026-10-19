@@ -7,10 +7,11 @@ import time
 
 from .chain import ChainReader, PoolEvent
 from .config import Config
-from .decision_engine import DecisionEngine, hold
+from .decision_engine import hold
+from .providers import engine_from_config
 from .execution import PaperExecutor
 from .gates import evaluate, deterministic_reasons, RiskLimits
-from .quote import quote_buy
+from .quote import quote_buy, quote_sell
 from .pricing import EthUsdFeed
 from .rpc import RPC, RpcError
 from .store import Store
@@ -29,17 +30,22 @@ class Monitor:
             refresh_seconds=cfg.price_refresh_seconds, max_age_seconds=cfg.price_max_age_seconds,
             max_divergence_pct=cfg.price_max_divergence_pct,
             future_tolerance_seconds=cfg.price_future_tolerance_seconds)
-        self.engine = DecisionEngine(cfg.decision_provider, cfg.typesafe_api_key, cfg.jev_endpoint,
-                                     cfg.jev_model, timeout=cfg.jev_timeout_seconds)
+        self.engine = engine_from_config(cfg, store)
         self.executor = PaperExecutor(store, cfg.paper_order_usd, cfg.paper_slippage_bps,
                                       cfg.paper_fee_bps, cfg.paper_stop_loss_pct, cfg.paper_take_profit_pct,
                                       cfg.paper_max_hold_seconds, cfg.max_open_positions,
-                                      cfg.max_paper_exposure_usd, cfg.max_daily_loss_usd)
+                                      cfg.max_paper_exposure_usd, cfg.max_daily_loss_usd,
+                                      cfg.quote_max_age_seconds, cfg.price_max_age_seconds,
+                                      cfg.price_future_tolerance_seconds)
         self.limits = RiskLimits(cfg.min_liquidity_usd, cfg.min_volatility_pct, cfg.max_volatility_pct, cfg.min_confidence,
                                  cfg.max_risk_score, cfg.max_price_impact_pct, cfg.owner_renounced_required,
                                  cfg.price_max_age_seconds, cfg.quote_max_age_seconds,
                                  cfg.price_future_tolerance_seconds, cfg.min_unique_buyers,
                                  cfg.max_top_buyer_share_pct, cfg.activity_max_lag_seconds)
+        if cfg.decision_provider == 'gemini':
+            # Separate research settings; Gemini self-ratings are not JEV probabilities.
+            self.limits.min_confidence = cfg.gemini_min_confidence
+            self.limits.max_risk_score = cfg.gemini_max_risk_score
         self.active: dict[str, PoolEvent] = {}
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -79,7 +85,7 @@ class Monitor:
             if not self.rpc.code(self.cfg.factory) or not self.rpc.code(self.cfg.weth):
                 raise RpcError('Factory or WETH code missing on configured RPC')
             self.restore_active()
-            if self.cfg.decision_provider == 'jev':
+            if self.cfg.decision_provider in ('jev', 'gemini') and not self.store.kill_switch():
                 # A labeled synthetic inference checks credentials/schema, never execution.
                 self.engine.check_connection()
             self.ready = True
@@ -216,6 +222,18 @@ class Monitor:
                     state['liquidity_usd'] = state['tvl_usd_estimate']
             except (RpcError, ValueError, ArithmeticError) as exc:
                 state['quote_error'] = str(exc)[:160]
+        state['exit_quotes'] = {}
+        positions = [p for p in self.store.open_positions() if p['pool'] == event.address.lower()]
+        # Exits remain independent of model availability, entry gates and the kill switch.
+        if positions and reference['verified'] and self.cfg.quoter:
+            try:
+                self._verify_quoter()
+                for position in positions:
+                    quote = quote_sell(self.rpc, self.cfg.quoter, event, self.cfg.weth,
+                                       reference['price_usd'], position['units'], state.get('decimals'))
+                    state['exit_quotes'][str(position['id'])] = quote
+            except (RpcError, ValueError, ArithmeticError) as exc:
+                state['exit_quote_error'] = str(exc)[:160]
         # Long RPC calls may outlive the source freshness window. Do not mark paper
         # positions using a now-stale USD reference; gates recheck after model latency.
         if (not reference['verified'] or not
@@ -245,14 +263,15 @@ class Monitor:
         if self.store.kill_switch():
             return hold('kill_switch'), {'provider': self.cfg.decision_provider, 'sent': False,
                                          'reason': 'kill_switch'}
-        if self.cfg.decision_provider == 'jev' and self.cfg.jev_call_policy == 'prefiltered':
+        if (self.cfg.decision_provider == 'gemini' or
+                self.cfg.decision_provider == 'jev' and self.cfg.jev_call_policy == 'prefiltered'):
             # Each JEV call may cost credits. If the application gates already reject the
             # strongest possible model answer, the model cannot change the outcome.
             blocked = deterministic_reasons(state, self.limits)
             if blocked:
                 return ({'action': 'skip', 'confidence': 0.0, 'risk_score': 10.0,
                          'error': 'not_sent_deterministic_gates_failed'},
-                        {'provider': 'jev', 'sent': False, 'reason': 'deterministic_gates_failed',
+                        {'provider': self.cfg.decision_provider, 'sent': False, 'reason': 'deterministic_gates_failed',
                          'prefilter_reasons': blocked})
         return self.engine.decide(state)
 

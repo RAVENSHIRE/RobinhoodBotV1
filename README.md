@@ -1,6 +1,6 @@
 # HOODSCOUT / ROBINHOOD CHAIN
 
-**Standalone, Robinhood Chain-only** Uniswap V3 pool scanner, Jev-compatible decision bridge, independent risk gates, paper-trading ledger, research replay, and monochrome dashboard. **Not related to or built into the existing Solana bot.**
+**Standalone, Robinhood Chain-only** Uniswap V3 pool scanner, JEV and Gemini decision adapters, independent risk gates, paper-trading ledger, research replay, and monochrome dashboard. **Not related to or built into the existing Solana bot.**
 
 **Status:** research MVP; live order broadcasting intentionally unimplemented / blocked. Read-only chain ID, contract getters and a QuoterV2 call were verified on Robinhood mainnet on 2026-10-09. No profitable strategy or live trading readiness is claimed. Sample dashboard data is **synthetic**, clearly labeled, and isolated in `data/demo`.
 
@@ -83,6 +83,77 @@ The adapter sends `state`, `questions` and `model=jev-latest` to `https://api.ty
 
 The hard gates operate **after** the model and independently check min TVL proxy ($20K), verified fresh quoter execution quote, strictly less than 3% quote impact, observed 1–100% trailing volatility, at least 3 unique buyers, top buyer at most 50% of buy volume, swap data no older than 30 seconds, min confidence 0.70, max risk score 4, renounced ownership and real bytecode. Also, `LIVE_MODE=true` is **not sufficient to trade**: the live executor refuses to send any transaction in this release. No real private keys required or accepted.
 
+## Gemini on Windows
+
+Gemini is an alternative provider; it does not repair or require TypeSafe authentication.
+Get a **Gemini Developer API key** at https://aistudio.google.com/apikey. In AI Studio,
+select/import the Google Cloud project linked to your intended billing account. A Gemini
+app/Google AI Pro subscription does not include Gemini API usage. Google Cloud promotional
+credits have service restrictions: check their terms and the project's billing report before
+assuming Gemini Developer API calls are covered. This adapter does not use Vertex AI/ADC.
+For an existing shared project, use a separate API key with the appropriate API restriction;
+this separates credentials but does not isolate the project's quota or spending.
+
+Add these settings to your **existing local `.env`** (never commit or send the real key):
+
+```dotenv
+GEMINI_API_KEY=your_local_key
+GEMINI_MODEL=gemini-2.5-flash-lite
+GEMINI_MAX_CALLS_PER_DAY=100
+LIVE_MODE=false
+```
+
+The model ID is configurable. Its availability for your account is established by the check,
+not assumed from this example. Stop the old server and run from the project directory:
+
+```powershell
+.\.venv\Scripts\python.exe -m hoodscout.cli gemini-setup
+.\.venv\Scripts\python.exe -m hoodscout.cli serve
+```
+
+`gemini-setup` uses the configured key without a paste prompt, makes one small synthetic
+inference (potentially billable), and selects `DECISION_PROVIDER=gemini` only after a valid
+HOLD response. `gemini-check` checks without editing `.env`. Normal process environment
+variables take precedence over `.env`; remove an old `DECISION_PROVIDER=stub` override when
+starting manually. No key is required in this cloud development environment.
+
+The model receives a bounded allowlist of measurements and returns an entry case and a
+counter-case in **one request**. These are two perspectives from one model, not independent
+agents or a calibrated trading edge. Gemini always passes deterministic prefiltering first,
+even if `JEV_CALL_POLICY=all`. Its separate `GEMINI_MIN_CONFIDENCE=0.85` and
+`GEMINI_MAX_RISK_SCORE=3` are uncalibrated paper-research settings, not reused JEV calibration
+or probabilities of profit. Validate them on held-out observations before any live use.
+
+The daily attempt counter is persisted in the selected `DATA_DIR` and resets at UTC midnight.
+It counts startup/check requests and failed calls, survives restarts and reserves attempts
+atomically across processes. It is a **call cap, not a currency budget**; another database,
+another application or a changed cap has its own usage. Output is capped at 512 tokens and
+observation input at 12 KB. Google billing budget alerts generally do not stop spending.
+There are no automatic model retries. HTTP errors, timeouts, blocked/truncated/malformed
+answers, exhausted attempts and missing keys all produce HOLD. The dashboard reports the
+actual provider, connection result and call count, never key values.
+
+## Paper exits and the remaining live integration
+
+Open positions now require a fresh **token-to-WETH QuoterV2 quote for their held quantity**
+and a fresh USD reference before a paper stop, take-profit or maximum-hold exit is recorded.
+Quotes are bound to the pool, token and position quantity. A missing/reverted/stale quote
+leaves the position open, even after its maximum holding time; a spot price cannot fabricate
+a fill. Exit checks do not depend on AI availability or the entry kill switch. Legacy recorded
+closed trades and replay results are preserved; replay remains a spot-based research estimate.
+
+QuoterV2 does not establish transferability, approvals, actual router execution, gas costs or
+the ability to sell a taxed/blocked token. These paper exits still exclude gas/MEV and are
+not real fills. Snapshot `exit_quotes` and `exit_quote_error` explain observed exit availability.
+
+**Live trading is still unavailable.** The remaining implementation requires a verified router
+and transaction simulation, dedicated wallet signing, bounded approvals, persistent order/
+nonce/receipt reconciliation (including restart and reorg handling), and monitoring independent
+of model outages. A funded wallet's public address and explicit order/exposure/daily-loss
+limits are needed before an actual live pilot. Phantom availability alone does not establish
+Robinhood Chain support. Do not export your existing Phantom recovery phrase into HoodScout.
+No signer, wallet key, automatic transfer or broadcast is included in this update.
+
 ## Research replay
 
 Snapshots are recorded **when observed**; the bot does not fabricate historical ticks. For a requested entry at T+60 seconds and holding 300 seconds, the replay requires actual time-appropriate snapshots at the entry and exit. It omits incomplete tokens, reporting how many were usable. Simple replay net return includes an explicit fee/slippage haircut on each side but not chain gas, latency, MEV, taxes, or guaranteed historical fillability. Use only as preliminary research.
@@ -109,7 +180,7 @@ Persisted files under `DATA_DIR`:
 6. **A quote is not sellability proof.** The current MVP does not simulate a complete buy/approve/sell round trip or handle fee-on-transfer tokens.
 7. **Jev remains unverified.** Mainnet RPC/getters and a real QuoterV2 call were checked; the sampled pool exceeded the price-impact limit. Coinbase was checked on Windows. The cloud proxy currently blocks exchange-feed requests, so live combined Coinbase/Kraken operation still requires validation in the target environment.
 8. **Default binding is localhost.** Never expose the unauthenticated dashboard or API publicly without access control.
-9. **Research stop/take-profit is spot-derived**, not an executable sell quote, and excludes gas/MEV. Paper P&L may overstate attainable results.
+9. **Paper stop/take-profit now requires a reverse quote**, but still excludes gas/MEV and token-transfer simulation. Historical replay remains spot-derived. Paper P&L may overstate attainable results.
 10. The current scanner has no optimized throughput for extremely high launch rates; use an indexed data source/robust provider before scaling.
 
 ## Swap activity tracking

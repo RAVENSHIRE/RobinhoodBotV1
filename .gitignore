@@ -1,5 +1,6 @@
 .env
 .hoodscout-jev-*.tmp
+.hoodscout-gemini-*.tmp
 .venv/
 __pycache__/
 .pytest_cache/
@@ -8,4 +9,8 @@ __pycache__/
 /data/*.db-shm
 /data/*.db-wal
 /data/*.jsonl
+/data/**/*.db
+/data/**/*.db-shm
+/data/**/*.db-wal
+/data/**/*.jsonl
 *.egg-info/

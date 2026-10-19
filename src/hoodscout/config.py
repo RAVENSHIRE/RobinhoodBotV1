@@ -66,6 +66,12 @@ class Config:
     max_top_buyer_share_pct: float = 50.0
     activity_max_lag_seconds: float = 30.0
     max_tx_lookups_per_cycle: int = 40
+    gemini_api_key: str | None = field(default=None, repr=False)
+    gemini_model: str = 'gemini-2.5-flash-lite'
+    gemini_timeout_seconds: float = 15.0
+    gemini_max_calls_per_day: int = 100
+    gemini_min_confidence: float = 0.85
+    gemini_max_risk_score: float = 3.0
 
 
 def load_config(env_path: str | None = None) -> Config:
@@ -118,6 +124,12 @@ def load_config(env_path: str | None = None) -> Config:
         max_top_buyer_share_pct=float(os.getenv('MAX_TOP_BUYER_SHARE_PCT', '50')),
         activity_max_lag_seconds=float(os.getenv('ACTIVITY_MAX_LAG_SECONDS', '30')),
         max_tx_lookups_per_cycle=int(os.getenv('MAX_TX_LOOKUPS_PER_CYCLE', '40')),
+        gemini_api_key=os.getenv('GEMINI_API_KEY') or None,
+        gemini_model=os.getenv('GEMINI_MODEL', 'gemini-2.5-flash-lite'),
+        gemini_timeout_seconds=float(os.getenv('GEMINI_TIMEOUT_SECONDS', '15')),
+        gemini_max_calls_per_day=int(os.getenv('GEMINI_MAX_CALLS_PER_DAY', '100')),
+        gemini_min_confidence=float(os.getenv('GEMINI_MIN_CONFIDENCE', '0.85')),
+        gemini_max_risk_score=float(os.getenv('GEMINI_MAX_RISK_SCORE', '3')),
     )
     if cfg.chain_id != 4663:
         raise ValueError("This project is mainnet Robinhood Chain only: CHAIN_ID must be 4663")
@@ -135,8 +147,16 @@ def load_config(env_path: str | None = None) -> Config:
         raise ValueError("ETH_USD must be positive")
     if cfg.price_feed_mode not in ('coinbase_kraken', 'off'):
         raise ValueError('PRICE_FEED_MODE must be coinbase_kraken or off')
-    if cfg.decision_provider not in ('stub', 'jev'):
-        raise ValueError('DECISION_PROVIDER must be stub or jev')
+    if cfg.decision_provider not in ('stub', 'jev', 'gemini'):
+        raise ValueError('DECISION_PROVIDER must be stub, jev or gemini')
+    import re
+    if not re.fullmatch(r'gemini-[a-z0-9.-]{1,80}', cfg.gemini_model):
+        raise ValueError('GEMINI_MODEL must be a Gemini model ID, not a URL')
+    if (not math.isfinite(cfg.gemini_timeout_seconds) or not 0 < cfg.gemini_timeout_seconds <= 120
+            or not 1 <= cfg.gemini_max_calls_per_day <= 10000
+            or not 0 <= cfg.gemini_min_confidence <= 1
+            or not 1 <= cfg.gemini_max_risk_score <= 10):
+        raise ValueError('Invalid Gemini timeout, daily call limit or research thresholds')
     if cfg.jev_call_policy not in ('prefiltered', 'all'):
         raise ValueError('JEV_CALL_POLICY must be prefiltered or all')
     if cfg.min_unique_buyers < 0 or cfg.max_tx_lookups_per_cycle < 0:
